@@ -1,0 +1,5 @@
+http (1.8.0-1) unstable; urgency=medium
+
+  * Initial release, upstream version 1.8.0
+
+ -- nabijaczleweli <nabijaczleweli@gmail.com>  Sat, 15 Feb 2020 17:38:20 +0100

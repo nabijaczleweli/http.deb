@@ -1,0 +1,23 @@
+#!/usr/bin/make -f
+
+
+CARGO ?= cargo
+RONN ?= ronn
+
+OUTDIR = $(CURDIR)/debian/http/
+VERSION = $(shell awk '/^version/ {print $$3; exit}' Cargo.toml | sed 's/"//g')
+
+
+override_dh_auto_build:
+	$(RONN) --organization="http developers" http.md 
+	RUSTFLAGS=-g $(CARGO) build --release
+
+override_dh_auto_install:
+	mkdir -p $(OUTDIR)usr/bin $(OUTDIR)usr/share/man/man1 $(OUTDIR)usr/share/doc/http
+	cp target/release/http $(OUTDIR)usr/bin/
+	cd $(OUTDIR)usr/bin/ && ln http httplz
+	cat http.1 | gzip -9 > $(OUTDIR)usr/share/man/man1/http.1.gz
+	cat README.md | gzip -9 > $(OUTDIR)usr/share/doc/http/README.md.gz
+
+%:
+	dh $@
