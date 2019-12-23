@@ -1,3 +1,14 @@
+http (1.8.0~ng1.webui-manager-1) unstable; urgency=medium
+
+  [PR https://github.com/thecoshman/http/pull/97]
+  * Delete, Rename, and New Folder buttons (see
+    https://github.com/thecoshman/http/issues/93#issuecomment-549523939
+    for screenshots)
+  * Fixed first-level children's parent links
+  * Fixed non-absolute symlinks
+
+ -- nabijaczleweli <nabijaczleweli@gmail.com>  Sat, 15 Feb 2020 17:38:20 +0100
+
 http (1.8.0-1) unstable; urgency=medium
 
   * Initial release, upstream version 1.8.0
