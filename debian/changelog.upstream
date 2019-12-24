@@ -1,0 +1,214 @@
+v1.8.0          I'm in shock, quite frankly, and so should you
+    
+    New:
+      * Implementation of WebDAV level 1 w/o locks (RFC2518),
+        mounting on Linux with davfs2, Windows out-of-box,
+        and Total Commander WebDAV plugin
+        (https://github.com/thecoshman/http/pulls/61)
+    
+    Fixed:
+      * Some clippy warnings
+    
+    Internal:
+      * Fixed Clippy installation method on Travis
+
+
+v1.7.0          ye of little faith, the four-month wait is over
+    
+    New:
+      * -a/--address to listen on the specified address instead of 0.0.0.0
+      * .deb packages for Debian-based systems
+        (https://github.com/thecoshman/http/pulls/57)
+      * -q/--quiet to suppress various amounts of the output information
+
+
+v1.6.0          Show thyself, villain!
+    
+    New:
+      * Arbitrarily-nestable per-path authentication through
+        --{gen-,}path-auth
+        (https://github.com/thecoshman/http/pulls/82)
+
+
+v1.5.2          Feline
+    
+    Fixed:
+      * Port detexion handling on OSX by accepting "in use" as "port taken"
+        (https://github.com/thecoshman/http/pulls/88)
+    
+    Changed:
+      * Error handling to require the reason
+
+
+v1.5.1          Why is it progress always leads to loads of mess?
+    
+    Changed:
+      * hyper-native-tls version to 0.3, following same bump on
+        iron 0.6.1's side, which should eliminate issues
+        related to outdated openssl &a. versions
+        (https://github.com/thecoshman/http/pulls/85) (https://github.com/thecoshman/http/pulls/86)
+
+
+v1.5.0          The access? Requires login. The door? Shut. The LotR editions? Extended.
+    
+    New:
+      * Global HTTP Basic Authentication with optionally-generated
+        credentials via --{,gen-}auth
+        (https://github.com/thecoshman/http/pulls/79)
+    
+    Changed:
+      * Dependency versions to fresher ones
+
+
+v1.4.1          Fearless file opening
+    
+    Fixed:
+      * Handler thread panicking when encountering a nonexistant file
+        (https://github.com/thecoshman/http/pulls/76) (https://github.com/thecoshman/http/pulls/77) (https://github.com/pheki)
+      * Pirate's e-mail address
+        (https://github.com/thecoshman/http/pulls/74)
+    
+    New:
+      * @pheki in authors list
+
+
+v1.4.0          Sym:b:inks
+    
+    Fixed:
+      * Illegal PUTs being accepted, as opposed to dumped into temp
+        (https://github.com/thecoshman/http/pulls/72)
+    
+    New:
+      * Restricting access to direct descendants of the hosted dir via
+        -r/--sandbox-symlinks
+        (https://github.com/thecoshman/http/pulls/71)
+
+
+v1.3.3          Steve J-who?
+    
+    Fixed:
+      * Build warnings on Windows
+      * Build error on MacOS
+        (https://github.com/thecoshman/http/pulls/69)
+
+
+v1.3.2          LINUX Is Not UniX who?
+    
+    New:
+      * "httplz" executable, exactly the same as the "http" executable
+        (https://github.com/thecoshman/http/pulls/35)
+    
+    Fixed:
+      * Handling of Unix devices, which can now be downloaded
+        (https://github.com/thecoshman/http/pulls/66)
+    
+    Changed:
+      * Crate version badge to HTTPS
+        (https://github.com/nabijaczleweli/cargo-update/pull/76)
+
+
+v1.3.1          Eye candy
+    
+    Changed:
+      * File size is right-aligned
+
+
+v1.3.0          RFSAPI v0 handling
+    
+    New:
+      * Support for RFSAPI, so one can view the server with D'Oh
+
+
+v1.2.0          TLS and temp dir removal
+    
+    New:
+      * Temporary directories cleaned up at exit
+      * TLS certificate usage
+      * TLS certificate autogeneration
+    
+    Fixed:
+      * Links to files with "%" and "#" in their names
+      * DELETEing symlinks unlinks rather than removing the pointed-to file
+
+
+v1.1.0          UI sweetness, encoding (pre)optimisations, Range request header support, icon embedding, directory upload support, installers
+    
+    New:
+      * Encoding extension blacklist, so as to not re-compress files
+      * Range header support
+      * Directories can be uploaded verbatim
+      * curl|sh and NSIS-based installers
+      * Upload button
+      * Special mobile dir listing
+    
+    Changed:
+      * Only serve compressed files with 10% gain
+      * More ergonomic desktop dir listings
+      * Timestamps are adjusted to the client's TZ
+
+
+v1.0.0          Sane symlinks and improved logging
+    
+    BREAKING:
+      * Following symlinks is now the default, so --follow-symlinks was
+        removed in favour of --no-follow-symlinks, so -s switch now means
+        --no-follow-symlinks instead of --follow-symlinks
+    
+    New:
+      * Log is now fully coloured with accordance to a strictly defined colourset
+    
+    Changed:
+      * All log lines are prefixed by a timestamp
+
+
+v0.3.1          Generated and requested data compression
+    
+    New:
+      * Encode generated data unconditionally
+      * Encode filesystem data by default (disable via -e)
+    
+    Changed:
+      * PUT files are cached in $TEMP/writes/ instead of $TEMP/
+
+
+v0.3.0          Very nice dir listings and index file handling
+    
+    New:
+      * Beautiful favicon
+      * Serve index files from directories (.html, .htm, .shtml)
+        (disableable via --no-index flag)
+      * Drag'n'drop support in browsers with writes enabled
+    
+    Changed:
+      * Filename, size, modification time and file type icon in directory
+        listing
+    
+    Fixed:
+      * Binary-ness checking
+
+
+v0.2.0          Writing support and proper symlink handling
+    
+    New:
+      * Writing support (PUT and DELETE requests) enableable with -w switch
+    
+    Fixed:
+      * Symlink handling en general
+      * Wonky symlinks on Windows
+
+
+v0.1.0          Initial release
+    
+    New:
+      * Subdir hosting
+      * Symlinks not followed by default (`-s` switch to do so)
+      * Root not required
+      * Index generation for directories
+      * Lack of caching
+      * Default hosted directory is current working dir
+      * Default port is first free one from `8000` up to `9999`
+      * 501 Not Implemented as a default response to unimplemented features (like a POST request)
+      * Correct MIME type for served files
+      * Simple templating of generated responses
+      * Request methods: OPTIONS, GET, HEAD and TRACE
+      * Proper handling of percent-encoded URLs (like `асдф fdsa`)

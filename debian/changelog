@@ -1,3 +1,10 @@
+http (1.8.0+ng1~webui-manager-2) unstable; urgency=medium
+
+  * Fixed versioning scheme so it actually works
+  * Upstream changelog
+
+ -- nabijaczleweli <nabijaczleweli@gmail.com>  Sun, 16 Feb 2020 16:55:50 +0100
+
 http (1.8.0~ng1.webui-manager-1) unstable; urgency=medium
 
   [PR https://github.com/thecoshman/http/pull/97]
