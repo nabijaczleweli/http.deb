@@ -4,7 +4,7 @@ v1.8.0          I'm in shock, quite frankly, and so should you
       * Implementation of WebDAV level 1 w/o locks (RFC2518),
         mounting on Linux with davfs2, Windows out-of-box,
         and Total Commander WebDAV plugin
-        (https://github.com/thecoshman/http/pulls/61)
+        (https://github.com/thecoshman/http/issues/61)
     
     Fixed:
       * Some clippy warnings
@@ -18,7 +18,7 @@ v1.7.0          ye of little faith, the four-month wait is over
     New:
       * -a/--address to listen on the specified address instead of 0.0.0.0
       * .deb packages for Debian-based systems
-        (https://github.com/thecoshman/http/pulls/57)
+        (https://github.com/thecoshman/http/issues/57)
       * -q/--quiet to suppress various amounts of the output information
 
 
@@ -27,14 +27,14 @@ v1.6.0          Show thyself, villain!
     New:
       * Arbitrarily-nestable per-path authentication through
         --{gen-,}path-auth
-        (https://github.com/thecoshman/http/pulls/82)
+        (https://github.com/thecoshman/http/issues/82)
 
 
 v1.5.2          Feline
     
     Fixed:
       * Port detexion handling on OSX by accepting "in use" as "port taken"
-        (https://github.com/thecoshman/http/pulls/88)
+        (https://github.com/thecoshman/http/issues/88)
     
     Changed:
       * Error handling to require the reason
@@ -46,7 +46,7 @@ v1.5.1          Why is it progress always leads to loads of mess?
       * hyper-native-tls version to 0.3, following same bump on
         iron 0.6.1's side, which should eliminate issues
         related to outdated openssl &a. versions
-        (https://github.com/thecoshman/http/pulls/85) (https://github.com/thecoshman/http/pulls/86)
+        (https://github.com/thecoshman/http/issues/85) (https://github.com/thecoshman/http/issues/86)
 
 
 v1.5.0          The access? Requires login. The door? Shut. The LotR editions? Extended.
@@ -54,7 +54,7 @@ v1.5.0          The access? Requires login. The door? Shut. The LotR editions? E
     New:
       * Global HTTP Basic Authentication with optionally-generated
         credentials via --{,gen-}auth
-        (https://github.com/thecoshman/http/pulls/79)
+        (https://github.com/thecoshman/http/issues/79)
     
     Changed:
       * Dependency versions to fresher ones
@@ -64,9 +64,9 @@ v1.4.1          Fearless file opening
     
     Fixed:
       * Handler thread panicking when encountering a nonexistant file
-        (https://github.com/thecoshman/http/pulls/76) (https://github.com/thecoshman/http/pulls/77) (https://github.com/pheki)
+        (https://github.com/thecoshman/http/issues/76) (https://github.com/thecoshman/http/issues/77) (https://github.com/pheki)
       * Pirate's e-mail address
-        (https://github.com/thecoshman/http/pulls/74)
+        (https://github.com/thecoshman/http/issues/74)
     
     New:
       * @pheki in authors list
@@ -76,12 +76,12 @@ v1.4.0          Sym:b:inks
     
     Fixed:
       * Illegal PUTs being accepted, as opposed to dumped into temp
-        (https://github.com/thecoshman/http/pulls/72)
+        (https://github.com/thecoshman/http/issues/72)
     
     New:
       * Restricting access to direct descendants of the hosted dir via
         -r/--sandbox-symlinks
-        (https://github.com/thecoshman/http/pulls/71)
+        (https://github.com/thecoshman/http/issues/71)
 
 
 v1.3.3          Steve J-who?
@@ -89,18 +89,18 @@ v1.3.3          Steve J-who?
     Fixed:
       * Build warnings on Windows
       * Build error on MacOS
-        (https://github.com/thecoshman/http/pulls/69)
+        (https://github.com/thecoshman/http/issues/69)
 
 
 v1.3.2          LINUX Is Not UniX who?
     
     New:
       * "httplz" executable, exactly the same as the "http" executable
-        (https://github.com/thecoshman/http/pulls/35)
+        (https://github.com/thecoshman/http/issues/35)
     
     Fixed:
       * Handling of Unix devices, which can now be downloaded
-        (https://github.com/thecoshman/http/pulls/66)
+        (https://github.com/thecoshman/http/issues/66)
     
     Changed:
       * Crate version badge to HTTPS
