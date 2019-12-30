@@ -1,3 +1,13 @@
+http (1.8.0+ng2~proxy-header-2) unstable; urgency=medium
+
+  * Fix lintian package-uses-debhelper-but-lacks-build-depends,
+                binary-without-manpage,
+                description-too-long,
+                extended-description-line-too-long,
+                maintainer-also-in-uploaders
+
+ -- nabijaczleweli <nabijaczleweli@gmail.com>  Tue, 18 Feb 2020 17:19:34 +0100
+
 http (1.8.0+ng2~proxy-header-1) unstable; urgency=medium
 
   * --proxy [HEADER-NAME:CIDR]... argument to fix logs behind a reverse proxy

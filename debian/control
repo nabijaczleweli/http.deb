@@ -2,15 +2,15 @@ Source: http
 Section: admin
 Priority: optional
 Maintainer: nabijaczleweli <nabijaczleweli@gmail.com>
-Uploaders: nabijaczleweli <nabijaczleweli@gmail.com>
 Standards-Version: 4.5.0
 Rules-Requires-Root: no
 Vcs-Git: https://github.com/nabijaczleweli/http.deb.git
 Vcs-Browser: https://github.com/nabijaczleweli/http.deb
 Homepage: https://github.com/thecoshman/http
 Tag: implemented-in::rust, role::program
-#Build-Depends: ronn,  too old, broken on my machine
-#               rustc?
+Build-Depends: debhelper,
+#              ronn,  too old, broken on my machine
+#              rustc?
 
 Package: http
 Architecture: linux-any
@@ -18,6 +18,10 @@ Section: web
 Priority: optional
 Depends: ${misc:Depends},
          ${shlibs:Depends},
-Description: Host These Things Please - a basic http server for hosting a folder fast and simply
- http is a well-featured static HTTP server, which doesn't require root privileges,
+Description: Host These Things Please - basic HTTP server
+ Host These Things Please - a basic http server for
+ hosting a folder fast and simply
+ .
+ http is a well-featured static HTTP server,
+ which doesn't require root privileges,
  and supports (option-gated) HTTP write, WebDAV, and Basic auth.

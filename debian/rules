@@ -17,6 +17,7 @@ override_dh_auto_install:
 	cp target/release/http $(OUTDIR)usr/bin/
 	cd $(OUTDIR)usr/bin/ && ln http httplz
 	cat http.1 | gzip -9 > $(OUTDIR)usr/share/man/man1/http.1.gz
+	cd $(OUTDIR)usr/share/man/man1/ && ln http.1.gz httplz.1.gz
 	cat README.md | gzip -9 > $(OUTDIR)usr/share/doc/http/README.md.gz
 	cat debian/changelog.upstream | gzip -9 > $(OUTDIR)usr/share/doc/http/changelog.gz
 
