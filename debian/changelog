@@ -1,3 +1,10 @@
+http (1.8.0+ng2~proxy-header-3) unstable; urgency=medium
+
+  * Use debhelper overrides correctly
+  * Fix source package Section
+
+ -- nabijaczleweli <nabijaczleweli@gmail.com>  Thu, 20 Feb 2020 03:18:28 +0100
+
 http (1.8.0+ng2~proxy-header-2) unstable; urgency=medium
 
   * Fix lintian package-uses-debhelper-but-lacks-build-depends,

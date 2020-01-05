@@ -1,5 +1,5 @@
 Source: http
-Section: admin
+Section: web
 Priority: optional
 Maintainer: nabijaczleweli <nabijaczleweli@gmail.com>
 Standards-Version: 4.5.0
