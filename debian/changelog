@@ -1,3 +1,10 @@
+http (1.8.0+ng3~recanonicalise-relative-symlinks-1) unstable; urgency=medium
+
+  * Ensure all requested paths end up absolute by re-canonicalising them
+    if they went through a non-absolute symlink
+
+ -- nabijaczleweli <nabijaczleweli@gmail.com>  Thu, 20 Feb 2020 20:42:29 +0100
+
 http (1.8.0+ng2~proxy-header-3) unstable; urgency=medium
 
   * Use debhelper overrides correctly
