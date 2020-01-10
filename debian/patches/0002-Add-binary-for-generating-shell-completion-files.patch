@@ -1,0 +1,84 @@
+From: nabijaczleweli <nabijaczleweli@gmail.com>
+Date: Sun, 23 Feb 2020 15:17:42 +0100
+Subject: Add binary for generating shell completion files
+
+---
+ Cargo.toml                    |  6 ++++++
+ src/http-build-completions.rs | 21 +++++++++++++++++++++
+ src/options.rs                | 10 +++++++---
+ 3 files changed, 34 insertions(+), 3 deletions(-)
+ create mode 100755 src/http-build-completions.rs
+
+diff --git a/Cargo.toml b/Cargo.toml
+index d79685b..3699121 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -75,6 +75,12 @@ path = "src/main.rs"
+ test = false
+ doc = false
+ 
++[[bin]]
++name = "http-build-completions"
++path = "src/http-build-completions.rs"
++test = false
++doc = false
++
+ 
+ [package.metadata.deb]
+ name = "http"
+diff --git a/src/http-build-completions.rs b/src/http-build-completions.rs
+new file mode 100755
+index 0000000..0f83c38
+--- /dev/null
++++ b/src/http-build-completions.rs
+@@ -0,0 +1,22 @@
++#[macro_use]
++extern crate lazy_static;
++extern crate regex;
++extern crate cidr;
++#[macro_use]
++extern crate clap;
++
++mod options;
++
++pub use options::{Options, LogLevel};
++
++use clap::Shell;
++
++
++fn main() {
++    let mut app = Options::app();
++    for &shell in &[Shell::Bash, Shell::Zsh, Shell::Fish] {
++        for &bin in &["http", "httplz"] {
++            app.gen_completions(bin, shell, ".");
++        }
++    }
++}
+diff --git a/src/options.rs b/src/options.rs
+index 9379d5b..e14ab59 100644
+--- a/src/options.rs
++++ b/src/options.rs
+@@ -101,9 +101,8 @@ pub struct Options {
+ }
+ 
+ impl Options {
+-    /// Parse `env`-wide command-line arguments into an `Options` instance
+-    pub fn parse() -> Options {
+-        let matches = App::new("http")
++    pub fn app() -> App<'static, 'static> {
++        App::new("http")
+             .version(crate_version!())
+             .author(crate_authors!("\n"))
+             .about(crate_description!())
+@@ -132,6 +131,11 @@ impl Options {
+             .arg(Arg::from_usage("--gen-path-auth [PATH]... 'Generate a one-off username:password set for authentication under PATH'"))
+             .arg(Arg::from_usage("--proxy [HEADER-NAME:CIDR]... 'Treat HEADER-NAME as proxy forwarded-for header when request comes from CIDR'")
+                 .validator(|s| Options::proxy_parse(s.into()).map(|_| ())))
++    }
++
++    /// Parse `env`-wide command-line arguments into an `Options` instance
++    pub fn parse() -> Options {
++        let matches = Options::app()
+             .get_matches();
+ 
+         let dir = matches.value_of("DIR").unwrap_or(".");
