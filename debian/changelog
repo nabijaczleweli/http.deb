@@ -1,3 +1,12 @@
+http (1.8.0+ng4~standalone-options-1) unstable; urgency=medium
+
+  * Avoid building the binary twice
+  * New upstream version 1.8.0+ng4~standalone-options
+  * Patch in simple binary for extracting shell completion files
+  * Install completions for bash, zsh, and fish
+
+ -- nabijaczleweli <nabijaczleweli@gmail.com>  Sun, 23 Feb 2020 17:49:22 +0100
+
 http (1.8.0+ng3~recanonicalise-relative-symlinks-1) unstable; urgency=medium
 
   * Ensure all requested paths end up absolute by re-canonicalising them
