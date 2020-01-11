@@ -9,6 +9,7 @@ Vcs-Browser: https://github.com/nabijaczleweli/http.deb
 Homepage: https://github.com/thecoshman/http
 Tag: implemented-in::rust, role::program
 Build-Depends: debhelper,
+               bash-completion,
 #              ronn,  too old, broken on my machine
 #              rustc?
 

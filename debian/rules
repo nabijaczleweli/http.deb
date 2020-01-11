@@ -9,15 +9,24 @@ VERSION = $(shell awk '/^version/ {print $$3; exit}' Cargo.toml | sed 's/"//g')
 
 
 override_dh_auto_build:
-	$(RONN) --organization="http developers" http.md 
+	mkdir -p completions
+	$(RONN) --organization="http developers" http.md
 	RUSTFLAGS=-g $(CARGO) build --release
+	cd completions && ../target/release/http-build-completions
 
 override_dh_auto_install:
-	mkdir -p $(OUTDIR)usr/bin $(OUTDIR)usr/share/man/man1 $(OUTDIR)usr/share/doc/http
+	mkdir -p $(OUTDIR)usr/bin $(OUTDIR)usr/share/man/man1 $(OUTDIR)usr/share/doc/http $(OUTDIR)usr/share/zsh/vendor-functions $(OUTDIR)usr/share/fish/vendor_completions.d
 	cp target/release/http $(OUTDIR)usr/bin/
 	cd $(OUTDIR)usr/bin/ && ln http httplz
+	@
 	cat http.1 | gzip -9 > $(OUTDIR)usr/share/man/man1/http.1.gz
 	cd $(OUTDIR)usr/share/man/man1/ && ln http.1.gz httplz.1.gz
+	@
+	dh_bash-completion
+	# https://bugs.debian.org/cgi-bin/bugreport.cgi?bug=921236#17
+	cp $(wildcard completions/_*) $(OUTDIR)usr/share/zsh/vendor-functions/
+	# https://fishshell.com/docs/current/#where-to-put-completions
+	cp $(wildcard completions/*.fish) $(OUTDIR)usr/share/fish/vendor_completions.d/
 
 override_dh_installchangelogs:
 	dh_installchangelogs debian/changelog.upstream
