@@ -1,0 +1,90 @@
+From: nabijaczleweli <nabijaczleweli@gmail.com>
+Date: Fri, 28 Feb 2020 02:02:43 +0100
+Subject: Fix typos found by evil-mode lintian
+
+---
+ http.md           | 4 ++--
+ src/ops/mod.rs    | 4 ++--
+ src/ops/webdav.rs | 2 +-
+ src/options.rs    | 4 ++--
+ 4 files changed, 7 insertions(+), 7 deletions(-)
+
+diff --git a/http.md b/http.md
+index f3da3de..ce0456b 100644
+--- a/http.md
++++ b/http.md
+@@ -206,7 +206,7 @@ pass parameters like what port to use.
+     As in the first example, but don't follow symlinks.
+ 
+     Example output change:
+-      127.0.0.1:47916 requested to GET nonexistant entity S:\Rust-target\doc\main.css
++      127.0.0.1:47916 requested to GET nonexistent entity S:\Rust-target\doc\main.css
+ 
+   `http -w`
+ 
+@@ -346,7 +346,7 @@ pass parameters like what port to use.
+     to direct descendants of the hosted directory.
+ 
+     Example output change:
+-      127.0.0.1:47916 requested to GET nonexistant entity S:\Rust-target\doc\main.css
++      127.0.0.1:47916 requested to GET nonexistent entity S:\Rust-target\doc\main.css
+ 
+ ## AUTHOR
+ 
+diff --git a/src/ops/mod.rs b/src/ops/mod.rs
+index 97b1fb3..27cdfae 100644
+--- a/src/ops/mod.rs
++++ b/src/ops/mod.rs
+@@ -335,7 +335,7 @@ impl HttpHandler {
+ 
+     fn handle_nonexistant_status(&self, req: &mut Request, req_p: PathBuf, status: status::Status) -> IronResult<Response> {
+         log!(self.log,
+-             "{green}{}{reset} requested to {red}{}{reset} nonexistant entity {magenta}{}{reset}",
++             "{green}{}{reset} requested to {red}{}{reset} nonexistent entity {magenta}{}{reset}",
+              req.remote_addr,
+              req.method,
+              req_p.display());
+@@ -481,7 +481,7 @@ impl HttpHandler {
+                                                 status::RangeNotSatisfiable,
+                                                 html_response(ERROR_HTML,
+                                                               &["416 Range Not Satisfiable",
+-                                                                &format!("Requested range <samp>{}</samp> could not be fullfilled for file {}.",
++                                                                &format!("Requested range <samp>{}</samp> could not be fulfilled for file {}.",
+                                                                          range,
+                                                                          req_p.display()),
+                                                                 reason]))
+diff --git a/src/ops/webdav.rs b/src/ops/webdav.rs
+index 3fdc098..ee41a8a 100644
+--- a/src/ops/webdav.rs
++++ b/src/ops/webdav.rs
+@@ -286,7 +286,7 @@ impl HttpHandler {
+ 
+                 (dest_p, dest_symlink)
+             }
+-            None => return self.handle_invalid_url(req, "<p>Destination URL invalid or nonexistant.</p>"),
++            None => return self.handle_invalid_url(req, "<p>Destination URL invalid or nonexistent.</p>"),
+         };
+ 
+         let depth = req.headers.get::<Depth>().copied().unwrap_or(Depth::Infinity);
+diff --git a/src/options.rs b/src/options.rs
+index 52a8eb7..b86d1c7 100644
+--- a/src/options.rs
++++ b/src/options.rs
+@@ -185,7 +185,7 @@ impl Options {
+         fs::canonicalize(&s).map_err(|_| format!("{} \"{}\" not found", prefix, s)).and_then(|f| if f.is_dir() {
+             Ok(())
+         } else {
+-            Err(format!("{} \"{}\" not actualy a directory", prefix, s))
++            Err(format!("{} \"{}\" not actually a directory", prefix, s))
+         })
+     }
+ 
+@@ -193,7 +193,7 @@ impl Options {
+         fs::canonicalize(&s).map_err(|_| format!("TLS identity file \"{}\" not found", s)).and_then(|f| if f.is_file() {
+             Ok(())
+         } else {
+-            Err(format!("TLS identity file \"{}\" not actualy a file", s))
++            Err(format!("TLS identity file \"{}\" not actually a file", s))
+         })
+     }
+ 

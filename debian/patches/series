@@ -1,3 +1,4 @@
 0001-Don-t-build-httplz.patch
 0002-Add-binary-for-generating-shell-completion-files.patch
-0003-BPO-1.8.0-ng4-Move-LogLevel-to-mod-options.patch
+0003-Fix-typos-found-by-evil-mode-lintian.patch
+0004-BPO-1.8.0-ng4-Move-LogLevel-to-mod-options.patch

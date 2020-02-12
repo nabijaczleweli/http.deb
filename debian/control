@@ -9,14 +9,13 @@ Vcs-Browser: https://github.com/nabijaczleweli/http.deb
 Homepage: https://github.com/thecoshman/http
 Tag: implemented-in::rust, role::program
 Build-Depends: debhelper,
+               debhelper-compat (= 12),
                bash-completion,
 #              ronn,  too old, broken on my machine
 #              rustc?
 
 Package: http
-Architecture: linux-any
-Section: web
-Priority: optional
+Architecture: any
 Depends: ${misc:Depends},
          ${shlibs:Depends},
 Description: Host These Things Please - basic HTTP server
