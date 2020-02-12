@@ -1,3 +1,22 @@
+http (1.8.0+ng4~standalone-options-2) unstable; urgency=medium
+
+  * Find and preserve unminified date.js, since source website
+    http://www.javascripttoolbox.com has died
+  * Fix licence spec of date.js
+  * Fix Architecture from linux-any to any
+  * Fix most evil-mode lintian warnings, notably:
+    + debian-watch-file-is-missing;
+    + spelling-error-in-binary and spelling-error-in-manpage,
+      by way of patch, waiting for upstream
+    + package-uses-old-debhelper-compat-version, by bumping debhelper compat
+      level to 12;
+    + source-contains-prebuilt-javascript-object, and
+      very-long-line-length-in-source-file,
+      by overriding: the upstream ships them that way,
+      repacking brings little value, and original source is preserved
+
+ -- nabijaczleweli <nabijaczleweli@gmail.com>  Fri, 28 Feb 2020 02:18:56 +0100
+
 http (1.8.0+ng4~standalone-options-1) unstable; urgency=medium
 
   * Avoid building the binary twice
