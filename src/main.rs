@@ -1,5 +1,8 @@
+#[macro_use]
+extern crate lazy_static;
 extern crate mime_guess;
 extern crate lazysort;
+extern crate base64;
 #[macro_use]
 extern crate clap;
 extern crate iron;
@@ -53,7 +56,7 @@ fn result_main() -> Result<(), Error> {
 
     println!("Hosting \"{}\" on port {}...", opts.hosted_directory.0, responder.socket.port());
     println!("Ctrl-C to stop.");
-    println!("");
+    println!();
 
     Ok(())
 }
