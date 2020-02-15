@@ -58,24 +58,54 @@ pass parameters like what port to use.
 
   --auth [USERNAME[:PASSWORD]]
 
-    Data for authentication.
+    Data for global authentication.
 
-    If specified, will require the specified credentials to access any path
-    on the server.
+    Equivalent to --path-auth with a root path and the same crednetials.
+
+    This argument is deprecated, and will be replaced with the current version
+    of --path-auth on the next breaking release.
+    Use --path-auth in new designs to avoid surprises.
 
     Default: None.
 
   --gen-auth
 
-    Generate a one-off username:password set for authentication.
+    Generate a one-off username:password set for global authentication.
+
+    Functions as if --auth was specified with the generated credentials.
+
+    This argument is deprecated, and will be replaced with the current version
+    of --gen-path-auth on the next breaking release.
+    Use --gen-path-auth in new designs to avoid surprises.
+
+    Exclusive with --auth. Default: false.
+
+  --path-auth [PATH=[USERNAME[:PASSWORD]]]
+
+    Data for per-path authentication.
+
+    The specified PATH will require the specified credentials to access.
+    If credentials are unspecified, the path will have authentication
+    disabled, even if global or parent paths have authentication specified.
+    These can be arbitrarily nested.
+
+    PATH is slash-normalised stripped of leading and trailing slashes.
+    Specifying more than one of the same PATH is erroneous.
+
+    Default: empty.
+
+  --gen-path-auth [PATH]
+
+    Generate a one-off username:password set for authentication under PATH.
 
     The username consists of 6-12 random alphanumeric characters, whereas
     the password consists of 10-25 random characters from most of the
     ASCII printable set.
 
-    Functions as if --auth was specified with the generated credentials.
+    Functions as if --path-auth was specified with PATH
+    and the generated credentials.
 
-    Exclusive with --auth. Default: false.
+    Exclusive with --path-auth with the equivalent PATH. Default: empty.
 
   -s --no-follow-symlinks
 
@@ -198,7 +228,8 @@ pass parameters like what port to use.
     unlocked with password "pwd".
 
     Assuming password is correct, example output change:
-      Hosting "." on port 8000 TLS certificate from "cert/http8k.p12" and no authentication...
+      Hosting "." on port 8000 TLS certificate from "cert/http8k.p12"
+      and no authentication...
 
   `http --gen-ssl`
 
@@ -206,40 +237,72 @@ pass parameters like what port to use.
     identity file.
 
     Example output change:
-      Hosting "." on port 8000 TLS certificate from "$TEMP/http-P-Rust-http/tls/tls.p12" and no authentication...
+      Hosting "." on port 8000 with TLS certificate from
+      "$TEMP/http-P-Rust-http/tls/tls.p12" and no authentication...
 
-  `http --auth Pirate`
+  `http --path-auth /=Pirate`
 
     As in the first example, but require all clients to log in with the username "Pirate".
 
     Example output change:
-      Hosting "." on port 8000 without TLS and basic authentication using "Pirate" as username and no password...
+      Hosting "." on port 8000 without TLS and basic authentication...
+      Basic authentication credentials:
+      Path  Username  Password
+      /     Pirate
 
     On unauthed request:
       127.0.0.1:15141 requested to GET http://127.0.0.1:8005/ without authorisation
 
     Invalid credentials supplied:
-      127.0.0.1:15142 requested to GET http://127.0.0.1:8005/ with invalid credentials "Pirate:memelord11"
+      127.0.0.1:15142 requested to GET http://127.0.0.1:8005/ with invalid credentials
+      "Pirate:memelord11"
 
     Valid credentials supplied:
       127.0.0.1:15142 correctly authorised to GET http://127.0.0.1:8005/
       127.0.0.1:15142 was served directory listing for \\?\P:\Rust\http
 
-  `http --auth Pirate:memelord42`
+  `http --path-auth /=Pirate:memelord42`
 
-    As in the first example, but require all clients to log in with the username "Pirate" and password "memelord42".
+    As in the first example, but require all clients to log in
+    with the username "Pirate" and password "memelord42".
 
     Example output change:
-      Hosting "." on port 8000 without TLS and basic authentication using "Pirate" as username and "memelord42" as password...
+      Hosting "." on port 8000 without TLS and basic authentication...
+      Basic authentication credentials:
+      Path  Username  Password
+      /     Pirate    memelord42
 
     See above for log messages when performing requests.
 
-  `http --gen-auth`
+  `http --gen-path-auth /`
 
-    As in the first example, but generate a username:password pair and require all clients to log in therewith.
+    As in the first example, but generate a username:password pair
+    and require all clients to log in therewith.
 
     Example output change:
-      Hosting "." on port 8000 without TLS and basic authentication using "RQvjNUKmnD9" as username and ".TM&tb;t29,Eo" as password...
+      Hosting "." on port 8000 without TLS and basic authentication...
+      Basic authentication credentials:
+      Path  Username  Password
+      /     jOvm8yCp  &gK=h&$-$HElLPb9HO%
+
+    See above for log messages when performing requests.
+
+  `http --path-auth /=admin:admin --gen-path-auth /target/debug --path-auth target/doc= --path-auth target/.rustc_info.json= --path-auth target/release/=releases`
+
+    As in the first example, but allow unauthenticated access to /target/doc and /target/.rustc_info.json,
+    require username "releases" and no password to access /target/release,
+    require a randomly-generated username:password pair to access /target/debug,
+    and lock all other paths behind "admin:admin".
+
+    Example output change:
+      Hosting "." on port 8000 without TLS and basic authentication...
+      Basic authentication credentials:
+      Path                      Username  Password
+      /                         admin     admin
+      /target/.rustc_info.json
+      /target/debug             PYld448   l=Z~vdp,zAt^<uvRyU.T<F
+      /target/doc
+      /target/release           releases
 
     See above for log messages when performing requests.
 

@@ -1,7 +1,4 @@
 use md6;
-use rand::{Rng, thread_rng};
-use rand::distributions::uniform::Uniform as UniformDistribution;
-use rand::distributions::Alphanumeric as AlphanumericDistribution;
 use std::iter;
 use time::now;
 use serde_json;
@@ -14,15 +11,18 @@ use lazysort::SortedBy;
 use std::path::PathBuf;
 use std::fs::{self, File};
 use std::default::Default;
+use rand::{Rng, thread_rng};
 use iron::modifiers::Header;
-use std::collections::HashMap;
 use self::super::{Options, Error};
 use mime_guess::guess_mime_type_opt;
 use hyper_native_tls::NativeTlsServer;
+use std::collections::{BTreeMap, HashMap};
 use std::io::{self, SeekFrom, Write, Read, Seek};
 use trivial_colours::{Reset as CReset, Colour as C};
 use std::process::{ExitStatus, Command, Child, Stdio};
 use rfsapi::{RawFsApiHeader, FilesetData, RawFileData};
+use rand::distributions::uniform::Uniform as UniformDistribution;
+use rand::distributions::Alphanumeric as AlphanumericDistribution;
 use iron::{headers, status, method, mime, IronResult, Listening, Response, TypeMap, Request, Handler, Iron};
 use self::super::util::{WwwAuthenticate, url_path, file_hash, is_symlink, encode_str, encode_file, file_length, hash_string, html_response, file_binary,
                         client_mobile, percent_decode, file_icon_suffix, is_actually_file, is_descendant_of, response_encoding, detect_file_as_dir,
@@ -70,7 +70,8 @@ pub struct HttpHandler {
     pub follow_symlinks: bool,
     pub sandbox_symlinks: bool,
     pub check_indices: bool,
-    pub auth_data: Option<(String, Option<String>)>,
+    pub global_auth_data: Option<(String, Option<String>)>,
+    pub path_auth_data: BTreeMap<String, Option<(String, Option<String>)>>,
     pub writes_temp_dir: Option<(String, PathBuf)>,
     pub encoded_temp_dir: Option<(String, PathBuf)>,
     cache_gen: RwLock<CacheT<Vec<u8>>>,
@@ -79,15 +80,30 @@ pub struct HttpHandler {
 
 impl HttpHandler {
     pub fn new(opts: &Options) -> HttpHandler {
+        let mut path_auth_data = BTreeMap::new();
+        let mut global_auth_data = None;
+
+        for (path, creds) in &opts.path_auth_data {
+            let creds = creds.as_ref()
+                .map(|auth| {
+                    let mut itr = auth.split_terminator(':');
+                    (itr.next().unwrap().to_string(), itr.next().map(str::to_string))
+                });
+
+            if path == "" {
+                global_auth_data = creds;
+            } else {
+                path_auth_data.insert(path.to_string(), creds);
+            }
+        }
+
         HttpHandler {
             hosted_directory: opts.hosted_directory.clone(),
             follow_symlinks: opts.follow_symlinks,
             sandbox_symlinks: opts.sandbox_symlinks,
             check_indices: opts.check_indices,
-            auth_data: opts.auth_data.as_ref().map(|auth| {
-                let mut itr = auth.split_terminator(':');
-                (itr.next().unwrap().to_string(), itr.next().map(str::to_string))
-            }),
+            global_auth_data: global_auth_data,
+            path_auth_data: path_auth_data,
             writes_temp_dir: HttpHandler::temp_subdir(&opts.temp_directory, opts.allow_writes, "writes"),
             encoded_temp_dir: HttpHandler::temp_subdir(&opts.temp_directory, opts.encode_fs, "encoded"),
             cache_gen: Default::default(),
@@ -122,8 +138,8 @@ impl HttpHandler {
 
 impl Handler for HttpHandler {
     fn handle(&self, req: &mut Request) -> IronResult<Response> {
-        if let Some(auth) = self.auth_data.as_ref() {
-            if let Some(resp) = try!(self.verify_auth(req, auth)) {
+        if self.global_auth_data.is_some() || !self.path_auth_data.is_empty() {
+            if let Some(resp) = self.verify_auth(req)? {
                 return Ok(resp);
             }
         }
@@ -146,7 +162,34 @@ impl Handler for HttpHandler {
 }
 
 impl HttpHandler {
-    fn verify_auth(&self, req: &mut Request, auth: &(String, Option<String>)) -> IronResult<Option<Response>> {
+    fn verify_auth(&self, req: &mut Request) -> IronResult<Option<Response>> {
+        let mut auth = self.global_auth_data.as_ref();
+
+        if !self.path_auth_data.is_empty() {
+            let mut path = req.url.as_ref().path();
+            if path.starts_with('/') {
+                path = &path[1..];
+            }
+            if path.ends_with('/') {
+                path = &path[..path.len() - 1];
+            }
+
+            while !path.is_empty() {
+                if let Some(pad) = self.path_auth_data.get(path) {
+                    auth = pad.as_ref();
+                    break;
+                }
+
+                path = &path[..path.rfind('/').unwrap_or(0)];
+            }
+        }
+
+        let auth = if let Some(auth) = auth {
+            auth
+        } else {
+            return Ok(None);
+        };
+
         match req.headers.get() {
             Some(headers::Authorization(headers::Basic { username, password })) => {
                 let pwd = if password == &Some(String::new()) {
@@ -521,7 +564,7 @@ impl HttpHandler {
         self.handle_raw_fs_api_response(status::Ok,
                                         &FilesetData {
                                             writes_supported: self.writes_temp_dir.is_some(),
-                                            is_root: req.url.path() == [""],
+                                            is_root: req.url.as_ref().path_segments().unwrap().count() == 1,
                                             is_file: false,
                                             files: req_p.read_dir()
                                                 .expect("Failed to read requested directory")
@@ -564,7 +607,7 @@ impl HttpHandler {
                     ((!self.follow_symlinks || !self.sandbox_symlinks) ||
                      (self.follow_symlinks && self.sandbox_symlinks && is_descendant_of(&req_p, &self.hosted_directory.1)))
                 }) {
-                if req.url.path().pop() == Some("") {
+                if req.url.as_ref().path_segments().unwrap().next_back() == Some("") {
                     let r = self.handle_get_file(req, idx);
                     log!("{} found index file for directory {magenta}{}{reset}",
                          iter::repeat(' ').take(req.remote_addr.to_string().len()).collect::<String>(),
@@ -601,7 +644,7 @@ impl HttpHandler {
 
     fn handle_get_mobile_dir_listing(&self, req: &mut Request, req_p: PathBuf) -> IronResult<Response> {
         let relpath = (url_path(&req.url) + "/").replace("//", "/");
-        let is_root = req.url.path() == [""];
+        let is_root = req.url.as_ref().path_segments().unwrap().count() == 1;
         log!("{green}{}{reset} was served mobile directory listing for {magenta}{}{reset}",
              req.remote_addr,
              req_p.display());
@@ -688,7 +731,7 @@ impl HttpHandler {
 
     fn handle_get_dir_listing(&self, req: &mut Request, req_p: PathBuf) -> IronResult<Response> {
         let relpath = (url_path(&req.url) + "/").replace("//", "/");
-        let is_root = req.url.path() == [""];
+        let is_root = req.url.as_ref().path_segments().unwrap().count() == 1;
         log!("{green}{}{reset} was served directory listing for {magenta}{}{reset}",
              req.remote_addr,
              req_p.display());
@@ -1023,22 +1066,28 @@ impl HttpHandler {
     }
 
     fn parse_requested_path_custom_symlink(&self, req: &Request, follow_symlinks: bool) -> (PathBuf, bool, bool) {
-        req.url.path().into_iter().filter(|p| !p.is_empty()).fold((self.hosted_directory.1.clone(), false, false), |(mut cur, mut sk, mut err), pp| {
-            if let Some(pp) = percent_decode(pp) {
-                cur.push(&*pp);
-            } else {
-                err = true;
-            }
-            while let Ok(newlink) = cur.read_link() {
-                sk = true;
-                if follow_symlinks {
-                    cur = newlink;
+        req.url
+            .as_ref()
+            .path_segments()
+            .unwrap()
+            .into_iter()
+            .filter(|p| !p.is_empty())
+            .fold((self.hosted_directory.1.clone(), false, false), |(mut cur, mut sk, mut err), pp| {
+                if let Some(pp) = percent_decode(pp) {
+                    cur.push(&*pp);
                 } else {
-                    break;
+                    err = true;
                 }
-            }
-            (cur, sk, err)
-        })
+                while let Ok(newlink) = cur.read_link() {
+                    sk = true;
+                    if follow_symlinks {
+                        cur = newlink;
+                    } else {
+                        break;
+                    }
+                }
+                (cur, sk, err)
+            })
     }
 
     fn create_temp_dir(&self, td: &Option<(String, PathBuf)>) {
@@ -1056,7 +1105,8 @@ impl Clone for HttpHandler {
             follow_symlinks: self.follow_symlinks,
             sandbox_symlinks: self.sandbox_symlinks,
             check_indices: self.check_indices,
-            auth_data: self.auth_data.clone(),
+            global_auth_data: self.global_auth_data.clone(),
+            path_auth_data: self.path_auth_data.clone(),
             writes_temp_dir: self.writes_temp_dir.clone(),
             encoded_temp_dir: self.encoded_temp_dir.clone(),
             cache_gen: Default::default(),
@@ -1087,13 +1137,13 @@ pub fn try_ports<H: Handler + Clone>(hndlr: H, from: u16, up_to: u16, tls_data: 
         let ir = Iron::new(hndlr.clone());
         match if let Some(&((_, ref id), ref pw)) = tls_data.as_ref() {
             ir.https(("0.0.0.0", port),
-                     try!(NativeTlsServer::new(id, pw).map_err(|err| {
-                Error {
-                    desc: "TLS certificate",
-                    op: "open",
-                    more: err.to_string().into(),
-                }
-            })))
+                     NativeTlsServer::new(id, pw).map_err(|err| {
+                    Error {
+                        desc: "TLS certificate",
+                        op: "open",
+                        more: err.to_string().into(),
+                    }
+                })?)
         } else {
             ir.http(("0.0.0.0", port))
         } {
@@ -1166,15 +1216,15 @@ pub fn generate_tls_data(temp_dir: &(String, PathBuf)) -> Result<((String, PathB
         }
     }
 
-    let mut child = try!(Command::new("openssl")
-        .args(&["req", "-x509", "-newkey", "rsa:4096", "-nodes", "-keyout", "tls.key", "-out", "tls.crt", "-days", "3650", "-utf8"])
-        .current_dir(&tls_dir)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|error| err(true, "spawn", error.to_string())));
-    try!(child.stdin
+    let mut child =
+        Command::new("openssl").args(&["req", "-x509", "-newkey", "rsa:4096", "-nodes", "-keyout", "tls.key", "-out", "tls.crt", "-days", "3650", "-utf8"])
+            .current_dir(&tls_dir)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|error| err(true, "spawn", error.to_string()))?;
+    child.stdin
         .as_mut()
         .unwrap()
         .write_all(concat!("PL\nhttp\n",
@@ -1183,21 +1233,21 @@ pub fn generate_tls_data(temp_dir: &(String, PathBuf)) -> Result<((String, PathB
                            env!("CARGO_PKG_VERSION"),
                            "\nnabijaczleweli@gmail.com\n")
             .as_bytes())
-        .map_err(|error| err(true, "pipe", error.to_string())));
-    let es = try!(child.wait().map_err(|error| err(true, "wait", error.to_string())));
+        .map_err(|error| err(true, "pipe", error.to_string()))?;
+    let es = child.wait().map_err(|error| err(true, "wait", error.to_string()))?;
     if !es.success() {
         return Err(exit_err(true, &mut child, &es));
     }
 
-    let mut child = try!(Command::new("openssl")
-        .args(&["pkcs12", "-export", "-out", "tls.p12", "-inkey", "tls.key", "-in", "tls.crt", "-passin", "pass:", "-passout", "pass:"])
-        .current_dir(&tls_dir)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .map_err(|error| err(false, "spawn", error.to_string())));
-    let es = try!(child.wait().map_err(|error| err(false, "wait", error.to_string())));
+    let mut child =
+        Command::new("openssl").args(&["pkcs12", "-export", "-out", "tls.p12", "-inkey", "tls.key", "-in", "tls.crt", "-passin", "pass:", "-passout", "pass:"])
+            .current_dir(&tls_dir)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .map_err(|error| err(false, "spawn", error.to_string()))?;
+    let es = child.wait().map_err(|error| err(false, "wait", error.to_string()))?;
     if !es.success() {
         return Err(exit_err(false, &mut child, &es));
     }

@@ -11,7 +11,9 @@
 //! ```
 
 
-use clap::{AppSettings, Arg, App};
+use clap::{AppSettings, ErrorKind as ClapErrorKind, Error as ClapError, Arg, App};
+use std::collections::btree_map::{BTreeMap, Entry as BTreeMapEntry};
+use std::collections::BTreeSet;
 use std::env::{self, temp_dir};
 use std::path::PathBuf;
 use std::str::FromStr;
@@ -21,6 +23,7 @@ use std::fs;
 
 lazy_static! {
     static ref CREDENTIALS_REGEX: Regex = Regex::new("[^:]+(?::[^:]+)?").unwrap();
+    static ref PATH_CREDENTIALS_REGEX: Regex = Regex::new("(.+)=([^:]+(?::[^:]+)?)?").unwrap();
 }
 
 
@@ -52,10 +55,10 @@ pub struct Options {
     pub tls_data: Option<((String, PathBuf), String)>,
     /// Whether to generate a one-off certificate. Default: false
     pub generate_tls: bool,
-    /// Data for authentication, in the form `username[:password]`. Default: `None`
-    pub auth_data: Option<String>,
-    /// Whether to generate a one-off credential set. Default: false
-    pub generate_auth: bool,
+    /// Data for per-path authentication, in the form `username[:password]`, or `None` to explicitly disable
+    pub path_auth_data: BTreeMap<String, Option<String>>,
+    /// Paths for which to generate auth data
+    pub generate_path_auth: BTreeSet<String>,
 }
 
 impl Options {
@@ -80,13 +83,48 @@ impl Options {
             .arg(Arg::from_usage("--ssl [TLS_IDENTITY] 'Data for HTTPS, identity file. Password in HTTP_SSL_PASS env var, otherwise empty'")
                 .validator(Options::identity_validator))
             .arg(Arg::from_usage("--gen-ssl 'Generate a one-off TLS certificate'").conflicts_with("ssl"))
-            .arg(Arg::from_usage("--auth [USERNAME[:PASSWORD]] 'Data for authentication'").validator(Options::credentials_validator))
-            .arg(Arg::from_usage("--gen-auth 'Generate a one-off username:password set for authentication'").conflicts_with("auth"))
+            .arg(Arg::from_usage("--auth [USERNAME[:PASSWORD]] 'Data for global authentication'").validator(Options::credentials_validator))
+            .arg(Arg::from_usage("--gen-auth 'Generate a one-off username:password set for global authentication'").conflicts_with("auth"))
+            .arg(Arg::from_usage("--path-auth [PATH=[USERNAME[:PASSWORD]]]... 'Data for authentication under PATH'")
+                .validator(Options::path_credentials_validator))
+            .arg(Arg::from_usage("--gen-path-auth [PATH]... 'Generate a one-off username:password set for authentication under PATH'"))
             .get_matches();
 
         let dir = matches.value_of("DIR").unwrap_or(".");
         let dir_pb = fs::canonicalize(dir).unwrap();
         let follow_symlinks = !matches.is_present("no-follow-symlinks");
+
+        let mut path_auth_data = BTreeMap::new();
+        if let Some(root_auth) = matches.value_of("auth").map(Options::normalise_credentials) {
+            path_auth_data.insert("".to_string(), Some(root_auth));
+        }
+
+        if let Some(path_auth) = matches.values_of("path-auth") {
+            for (path, auth) in path_auth.map(Options::decode_path_credentials) {
+                match path_auth_data.entry(path) {
+                    BTreeMapEntry::Occupied(oe) => Options::path_credentials_dupe(oe.key()),
+                    BTreeMapEntry::Vacant(ve) => ve.insert(auth.map(Options::normalise_credentials)),
+                };
+            }
+        }
+
+        let mut generate_path_auth = BTreeSet::new();
+        if matches.is_present("gen-auth") {
+            generate_path_auth.insert("".to_string());
+        }
+
+        if let Some(gen_path_auth) = matches.values_of("gen-path-auth") {
+            for path in gen_path_auth.map(Options::normalise_path) {
+                if path_auth_data.contains_key(&path) {
+                    Options::path_credentials_dupe(&path);
+                }
+
+                if let Some(path) = generate_path_auth.replace(path) {
+                    Options::path_credentials_dupe(&path);
+                }
+            }
+        }
+
         Options {
             hosted_directory: (dir.to_string(), dir_pb.clone()),
             port: matches.value_of("port").map(u16::from_str).map(Result::unwrap),
@@ -116,15 +154,8 @@ impl Options {
             encode_fs: !matches.is_present("no-encode"),
             tls_data: matches.value_of("ssl").map(|id| ((id.to_string(), fs::canonicalize(id).unwrap()), env::var("HTTP_SSL_PASS").unwrap_or(String::new()))),
             generate_tls: matches.is_present("gen-ssl"),
-            auth_data: matches.value_of("auth").map(|auth| {
-                if auth.ends_with(':') {
-                        &auth[0..auth.len() - 1]
-                    } else {
-                        auth
-                    }
-                    .to_string()
-            }),
-            generate_auth: matches.is_present("gen-auth"),
+            path_auth_data: path_auth_data,
+            generate_path_auth: generate_path_auth,
         }
     }
 
@@ -148,8 +179,61 @@ impl Options {
         if CREDENTIALS_REGEX.is_match(&s) {
             Ok(())
         } else {
-            Err(format!("Authentication credentials \"{}\" need be in format \"username[:password]\"", s))
+            Err(format!("Global authentication credentials \"{}\" need be in format \"username[:password]\"", s))
         }
+    }
+
+    fn path_credentials_validator(s: String) -> Result<(), String> {
+        if PATH_CREDENTIALS_REGEX.is_match(&s) {
+            Ok(())
+        } else {
+            Err(format!("Per-path authentication credentials \"{}\" need be in format \"path=[username[:password]]\"", s))
+        }
+    }
+
+    fn decode_path_credentials(s: &str) -> (String, Option<&str>) {
+        let creds = PATH_CREDENTIALS_REGEX.captures(s).unwrap();
+
+        (Options::normalise_path(&creds[1]), creds.get(2).map(|m| m.as_str()))
+    }
+
+    fn path_credentials_dupe(path: &str) -> ! {
+        ClapError {
+                message: format!("Credentials for path \"/{}\" already present", path),
+                kind: ClapErrorKind::ArgumentConflict,
+                info: None,
+            }
+            .exit()
+    }
+
+    fn normalise_path(path: &str) -> String {
+        let mut frags = vec![];
+        for fragment in path.split(|c| c == '/' || c == '\\') {
+            match fragment {
+                "" | "." => {}
+                ".." => {
+                    frags.pop();
+                }
+                _ => frags.push(fragment),
+            }
+        }
+
+        let mut ret = String::with_capacity(frags.iter().map(|s| s.len()).sum::<usize>() + frags.len());
+        for frag in frags {
+            ret.push_str(frag);
+            ret.push('/');
+        }
+        ret.pop();
+        ret
+    }
+
+    fn normalise_credentials(creds: &str) -> String {
+        if creds.ends_with(':') {
+                &creds[0..creds.len() - 1]
+            } else {
+                creds
+            }
+            .to_string()
     }
 
     fn u16_validator(s: String) -> Result<(), String> {

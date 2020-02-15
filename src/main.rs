@@ -1,9 +1,11 @@
 extern crate hyper_native_tls;
+extern crate percent_encoding;
 extern crate trivial_colours;
 #[macro_use]
 extern crate lazy_static;
 extern crate serde_json;
 extern crate mime_guess;
+extern crate tabwriter;
 extern crate lazysort;
 extern crate brotli2;
 extern crate unicase;
@@ -21,7 +23,6 @@ extern crate iron;
 extern crate libc;
 extern crate rand;
 extern crate time;
-extern crate url;
 extern crate md6;
 
 mod error;
@@ -33,8 +34,12 @@ pub mod util;
 pub use error::Error;
 pub use options::Options;
 
+use std::mem;
 use iron::Iron;
 use std::process::exit;
+use tabwriter::TabWriter;
+use std::io::{Write, stdout};
+use std::collections::BTreeSet;
 use std::sync::{Arc, Mutex, Condvar};
 use hyper_native_tls::NativeTlsServer;
 
@@ -56,22 +61,22 @@ fn actual_main() -> i32 {
 fn result_main() -> Result<(), Error> {
     let mut opts = Options::parse();
     if opts.generate_tls {
-        opts.tls_data = Some(try!(ops::generate_tls_data(&opts.temp_directory)));
+        opts.tls_data = Some(ops::generate_tls_data(&opts.temp_directory)?);
     }
-    if opts.generate_auth {
-        opts.auth_data = Some(ops::generate_auth_data());
+    for path in mem::replace(&mut opts.generate_path_auth, BTreeSet::new()) {
+        opts.path_auth_data.insert(path, Some(ops::generate_auth_data()));
     }
 
-    let mut responder = try!(if let Some(p) = opts.port {
+    let mut responder = if let Some(p) = opts.port {
         if let Some(&((ref id, _), ref pw)) = opts.tls_data.as_ref() {
                 Iron::new(ops::HttpHandler::new(&opts)).https(("0.0.0.0", p),
-                                                              try!(NativeTlsServer::new(id, pw).map_err(|err| {
-                    Error {
-                        desc: "TLS certificate",
-                        op: "open",
-                        more: err.to_string().into(),
-                    }
-                })))
+                                                              NativeTlsServer::new(id, pw).map_err(|err| {
+                        Error {
+                            desc: "TLS certificate",
+                            op: "open",
+                            more: err.to_string().into(),
+                        }
+                    })?)
             } else {
                 Iron::new(ops::HttpHandler::new(&opts)).http(("0.0.0.0", p))
             }
@@ -84,7 +89,7 @@ fn result_main() -> Result<(), Error> {
             })
     } else {
         ops::try_ports(ops::HttpHandler::new(&opts), util::PORT_SCAN_LOWEST, util::PORT_SCAN_HIGHEST, &opts.tls_data)
-    });
+    }?;
 
     print!("{}Hosting \"{}\" on port {} with",
            trivial_colours::Reset,
@@ -95,20 +100,33 @@ fn result_main() -> Result<(), Error> {
     } else {
         print!("out TLS");
     }
-    print!(" and ");
-    if let Some(ad) = opts.auth_data.as_ref() {
-        let mut itr = ad.split(':');
-        print!("basic authentication using \"{}\" as username and ", itr.next().unwrap());
-        if let Some(p) = itr.next() {
-            print!("\"{}\" as", p);
-        } else {
-            print!("no");
-        }
-        print!(" password");
+    if !opts.path_auth_data.is_empty() {
+        print!(" and basic authentication");
     } else {
-        print!("no authentication");
+        print!(" and no authentication");
     }
     println!("...");
+    if !opts.path_auth_data.is_empty() {
+        println!("Basic authentication credentials:");
+
+        let mut out = TabWriter::new(stdout());
+        writeln!(out, "Path\tUsername\tPassword").unwrap();
+
+        for (path, creds) in &opts.path_auth_data {
+            if let Some(ad) = creds {
+                let mut itr = ad.split(':');
+                write!(out, "/{}\t{}\t", path, itr.next().unwrap()).unwrap();
+                if let Some(p) = itr.next() {
+                    write!(out, "{}", p).unwrap();
+                }
+                writeln!(out).unwrap();
+            } else {
+                writeln!(out, "/{}\t\t", path).unwrap();
+            }
+        }
+
+        out.flush().unwrap();
+    }
     println!("Ctrl-C to stop.");
     println!();
 
