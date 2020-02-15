@@ -197,8 +197,9 @@ pass parameters like what port to use.
 
 ## AUTHOR
 
-Written by thecoshman &lt;<thecoshman@gmail.com>&gt;,
-       and nabijaczleweli &lt;<nabijaczleweli@gmail.com>&gt;.
+Written by thecoshman &lt;<rust@thecoshman.com>&gt;,
+           nabijaczleweli &lt;<nabijaczleweli@gmail.com>&gt;,
+       and pheki.
 
 ## REPORTING BUGS
 
