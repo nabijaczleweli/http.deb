@@ -14,9 +14,11 @@
 use clap::{AppSettings, ErrorKind as ClapErrorKind, Error as ClapError, Arg, App};
 use std::collections::btree_map::{BTreeMap, Entry as BTreeMapEntry};
 use std::collections::BTreeSet;
+use self::super::ops::LogLevel;
 use std::env::{self, temp_dir};
 use std::path::PathBuf;
 use std::str::FromStr;
+use std::net::IpAddr;
 use regex::Regex;
 use std::fs;
 
@@ -34,6 +36,8 @@ pub struct Options {
     pub hosted_directory: (String, PathBuf),
     /// The port to host on. Default: first free port from 8000 up
     pub port: Option<u16>,
+    /// The address to bind to. Default: 0.0.0.0
+    pub bind_address: IpAddr,
     /// Whether to allow symlinks to be requested. Default: true
     pub follow_symlinks: bool,
     /// Whether to disallow going out of the descendants of the hosted directory (via symlinks)
@@ -51,6 +55,12 @@ pub struct Options {
     pub allow_writes: bool,
     /// Whether to encode filesystem files. Default: true
     pub encode_fs: bool,
+    /// How much to suppress output
+    ///
+    ///   * >= 1 – suppress serving status lines ("IP was served something")
+    ///   * >= 2 – suppress startup except for auth data, if present
+    ///   * >= 3 – suppress all startup messages
+    pub loglevel: LogLevel,
     /// Data for HTTPS, identity file and password. Default: `None`
     pub tls_data: Option<((String, PathBuf), String)>,
     /// Whether to generate a one-off certificate. Default: false
@@ -72,6 +82,7 @@ impl Options {
             .arg(Arg::from_usage("[DIR] 'Directory to host. Default: current working directory'")
                 .validator(|s| Options::filesystem_dir_validator(s, "Directory to host")))
             .arg(Arg::from_usage("-p --port [port] 'Port to use. Default: first free port from 8000 up'").validator(Options::u16_validator))
+            .arg(Arg::from_usage("-a --address [address] 'Address to bind to. Default: 0.0.0.0'").validator(Options::ipaddr_validator))
             .arg(Arg::from_usage("-t --temp-dir [temp] 'Temporary directory. Default: $TEMP'")
                 .validator(|s| Options::filesystem_dir_validator(s, "Temporary directory")))
             .arg(Arg::from_usage("-s --no-follow-symlinks 'Don't follow symlinks. Default: false'"))
@@ -80,6 +91,7 @@ impl Options {
             .arg(Arg::from_usage("-w --allow-write 'Allow for write operations. Default: false'"))
             .arg(Arg::from_usage("-i --no-indices 'Always generate dir listings even if index files are available. Default: false'"))
             .arg(Arg::from_usage("-e --no-encode 'Do not encode filesystem files. Default: false'"))
+            .arg(Arg::from_usage("-q --quiet... 'Suppress increasing amounts of output'"))
             .arg(Arg::from_usage("--ssl [TLS_IDENTITY] 'Data for HTTPS, identity file. Password in HTTP_SSL_PASS env var, otherwise empty'")
                 .validator(Options::identity_validator))
             .arg(Arg::from_usage("--gen-ssl 'Generate a one-off TLS certificate'").conflicts_with("ssl"))
@@ -128,6 +140,7 @@ impl Options {
         Options {
             hosted_directory: (dir.to_string(), dir_pb.clone()),
             port: matches.value_of("port").map(u16::from_str).map(Result::unwrap),
+            bind_address: matches.value_of("address").map(IpAddr::from_str).map(Result::unwrap).unwrap_or_else(|| "0.0.0.0".parse().unwrap()),
             follow_symlinks: follow_symlinks,
             sandbox_symlinks: follow_symlinks && matches.is_present("sandbox-symlinks"),
             temp_directory: {
@@ -152,6 +165,7 @@ impl Options {
             check_indices: !matches.is_present("no-indices"),
             allow_writes: matches.is_present("allow-write"),
             encode_fs: !matches.is_present("no-encode"),
+            loglevel: matches.occurrences_of("quiet").into(),
             tls_data: matches.value_of("ssl").map(|id| ((id.to_string(), fs::canonicalize(id).unwrap()), env::var("HTTP_SSL_PASS").unwrap_or(String::new()))),
             generate_tls: matches.is_present("gen-ssl"),
             path_auth_data: path_auth_data,
@@ -234,6 +248,10 @@ impl Options {
                 creds
             }
             .to_string()
+    }
+
+    fn ipaddr_validator(s: String) -> Result<(), String> {
+        IpAddr::from_str(&s).map(|_| ()).map_err(|_| format!("{} is not a valid IP address", s))
     }
 
     fn u16_validator(s: String) -> Result<(), String> {

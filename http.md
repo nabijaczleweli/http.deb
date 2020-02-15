@@ -32,6 +32,12 @@ pass parameters like what port to use.
 
     Default: first free port from 8000 up.
 
+  -a --address [ADDRESS]
+
+    IP to bind the server to.
+
+    Default: 0.0.0.0.
+
   -t --temp-dir [TEMP]
 
     Temporary directory to use to store data to write.
@@ -147,6 +153,16 @@ pass parameters like what port to use.
 
     This is false by default because it's useful for reducing bandwidth usage.
 
+  -q --quiet...
+
+    Suppress increasing amounts of output.
+
+    Specifying this flag N times will, for:
+      N == 0 – show all output
+      N >= 1 – suppress serving status lines ("IP was served something")
+      N >= 2 – suppress startup except for auth data, if present
+      N >= 3 – suppress all startup messages
+
 ## EXAMPLES
 
   `http`
@@ -220,6 +236,18 @@ pass parameters like what port to use.
 
     If the port is taken, example output change:
       Starting server failed: port taken.
+      <EOF>
+
+  `http -a 192.168.65.1`
+
+    As in the first example, but listen on address 192.168.65.21.
+
+    Assuming the address can be used, example output change:
+      Hosting "." on port 8000 under address 192.168.65.1 without TLS and no authentication...
+
+    If the address is inaccessible or doesn't exist, example output change:
+      Starting server failed: The requested address is not valid in its context.
+      (os error 10049).
       <EOF>
 
   `HTTP_SSL_PASS=pwd http --ssl cert/http8k.p12`
