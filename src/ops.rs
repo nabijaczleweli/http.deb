@@ -1,4 +1,7 @@
 use md6;
+use rand::{Rng, thread_rng};
+use rand::distributions::uniform::Uniform as UniformDistribution;
+use rand::distributions::Alphanumeric as AlphanumericDistribution;
 use std::iter;
 use time::now;
 use serde_json;
@@ -21,10 +24,10 @@ use trivial_colours::{Reset as CReset, Colour as C};
 use std::process::{ExitStatus, Command, Child, Stdio};
 use rfsapi::{RawFsApiHeader, FilesetData, RawFileData};
 use iron::{headers, status, method, mime, IronResult, Listening, Response, TypeMap, Request, Handler, Iron};
-use self::super::util::{url_path, file_hash, is_symlink, encode_str, encode_file, file_length, hash_string, html_response, file_binary, client_mobile,
-                        percent_decode, file_icon_suffix, is_actually_file, is_descendant_of, response_encoding, detect_file_as_dir, encoding_extension,
-                        file_time_modified, get_raw_fs_metadata, human_readable_size, is_nonexistant_descendant_of, USER_AGENT, ERROR_HTML, INDEX_EXTENSIONS,
-                        MIN_ENCODING_GAIN, MAX_ENCODING_SIZE, MIN_ENCODING_SIZE, DIRECTORY_LISTING_HTML, MOBILE_DIRECTORY_LISTING_HTML,
+use self::super::util::{WwwAuthenticate, url_path, file_hash, is_symlink, encode_str, encode_file, file_length, hash_string, html_response, file_binary,
+                        client_mobile, percent_decode, file_icon_suffix, is_actually_file, is_descendant_of, response_encoding, detect_file_as_dir,
+                        encoding_extension, file_time_modified, get_raw_fs_metadata, human_readable_size, is_nonexistant_descendant_of, USER_AGENT, ERROR_HTML,
+                        INDEX_EXTENSIONS, MIN_ENCODING_GAIN, MAX_ENCODING_SIZE, MIN_ENCODING_SIZE, DIRECTORY_LISTING_HTML, MOBILE_DIRECTORY_LISTING_HTML,
                         BLACKLISTED_ENCODING_EXTENSIONS};
 
 
@@ -67,6 +70,7 @@ pub struct HttpHandler {
     pub follow_symlinks: bool,
     pub sandbox_symlinks: bool,
     pub check_indices: bool,
+    pub auth_data: Option<(String, Option<String>)>,
     pub writes_temp_dir: Option<(String, PathBuf)>,
     pub encoded_temp_dir: Option<(String, PathBuf)>,
     cache_gen: RwLock<CacheT<Vec<u8>>>,
@@ -80,6 +84,10 @@ impl HttpHandler {
             follow_symlinks: opts.follow_symlinks,
             sandbox_symlinks: opts.sandbox_symlinks,
             check_indices: opts.check_indices,
+            auth_data: opts.auth_data.as_ref().map(|auth| {
+                let mut itr = auth.split_terminator(':');
+                (itr.next().unwrap().to_string(), itr.next().map(str::to_string))
+            }),
             writes_temp_dir: HttpHandler::temp_subdir(&opts.temp_directory, opts.allow_writes, "writes"),
             encoded_temp_dir: HttpHandler::temp_subdir(&opts.temp_directory, opts.encode_fs, "encoded"),
             cache_gen: Default::default(),
@@ -114,6 +122,12 @@ impl HttpHandler {
 
 impl Handler for HttpHandler {
     fn handle(&self, req: &mut Request) -> IronResult<Response> {
+        if let Some(auth) = self.auth_data.as_ref() {
+            if let Some(resp) = try!(self.verify_auth(req, auth)) {
+                return Ok(resp);
+            }
+        }
+
         match req.method {
             method::Options => self.handle_options(req),
             method::Get => self.handle_get(req),
@@ -132,6 +146,45 @@ impl Handler for HttpHandler {
 }
 
 impl HttpHandler {
+    fn verify_auth(&self, req: &mut Request, auth: &(String, Option<String>)) -> IronResult<Option<Response>> {
+        match req.headers.get() {
+            Some(headers::Authorization(headers::Basic { username, password })) => {
+                let pwd = if password == &Some(String::new()) {
+                    &None
+                } else {
+                    password
+                };
+
+                if &auth.0 == username && &auth.1 == pwd {
+                    log!("{green}{}{reset} correctly authorised to {red}{}{reset} {yellow}{}{reset}",
+                         req.remote_addr,
+                         req.method,
+                         req.url);
+
+                    Ok(None)
+                } else {
+                    log!("{green}{}{reset} requested to {red}{}{reset} {yellow}{}{reset} with invalid credentials \"{}{}{}\"",
+                         req.remote_addr,
+                         req.method,
+                         req.url,
+                         username,
+                         if password.is_some() { ":" } else { "" },
+                         password.as_ref().map_or("", |s| &s[..]));
+
+                    Ok(Some(Response::with((status::Unauthorized, Header(WwwAuthenticate("basic".into())), "Supplied credentials invalid."))))
+                }
+            }
+            None => {
+                log!("{green}{}{reset} requested to {red}{}{reset} {yellow}{}{reset} without authorisation",
+                     req.remote_addr,
+                     req.method,
+                     req.url);
+
+                Ok(Some(Response::with((status::Unauthorized, Header(WwwAuthenticate("basic".into())), "Credentials required."))))
+            }
+        }
+    }
+
     fn handle_options(&self, req: &mut Request) -> IronResult<Response> {
         log!("{green}{}{reset} asked for {red}OPTIONS{reset}", req.remote_addr);
         Ok(Response::with((status::NoContent,
@@ -1003,6 +1056,7 @@ impl Clone for HttpHandler {
             follow_symlinks: self.follow_symlinks,
             sandbox_symlinks: self.sandbox_symlinks,
             check_indices: self.check_indices,
+            auth_data: self.auth_data.clone(),
             writes_temp_dir: self.writes_temp_dir.clone(),
             encoded_temp_dir: self.encoded_temp_dir.clone(),
             cache_gen: Default::default(),
@@ -1148,4 +1202,29 @@ pub fn generate_tls_data(temp_dir: &(String, PathBuf)) -> Result<((String, PathB
     }
 
     Ok(((format!("{}/tls/tls.p12", temp_dir.0), tls_dir.join("tls.p12")), String::new()))
+}
+
+/// Generate random username:password auth credentials.
+pub fn generate_auth_data() -> String {
+    static PASSWORD_SET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789~!@#$%^&*()_+`-=[]{}|;',./<>?";
+
+
+    let mut rng = thread_rng();
+    let username_len = rng.sample(UniformDistribution::new(6, 12));
+    let password_len = rng.sample(UniformDistribution::new(10, 25));
+
+    let mut res = String::with_capacity(username_len + 1 + password_len);
+
+    for _ in 0..username_len {
+        res.push(rng.sample(AlphanumericDistribution));
+    }
+
+    res.push(':');
+
+    let password_gen = UniformDistribution::new(0, PASSWORD_SET.len());
+    for _ in 0..password_len {
+        res.push(PASSWORD_SET[rng.sample(password_gen) as usize] as char);
+    }
+
+    res
 }

@@ -13,11 +13,13 @@ extern crate rfsapi;
 extern crate bzip2;
 extern crate ctrlc;
 extern crate serde;
+extern crate regex;
 #[macro_use]
 extern crate clap;
 extern crate iron;
 #[cfg(not(any(target_os = "windows", target_os = "macos")))]
 extern crate libc;
+extern crate rand;
 extern crate time;
 extern crate url;
 extern crate md6;
@@ -57,6 +59,9 @@ fn result_main() -> Result<(), Error> {
     if opts.generate_tls {
         opts.tls_data = Some(try!(ops::generate_tls_data(&opts.temp_directory)));
     }
+    if opts.generate_auth {
+        opts.auth_data = Some(ops::generate_auth_data());
+    }
 
     let mut responder = try!(if let Some(p) = opts.port {
         if let Some(&((ref id, _), ref pw)) = opts.tls_data.as_ref() {
@@ -87,10 +92,24 @@ fn result_main() -> Result<(), Error> {
            opts.hosted_directory.0,
            responder.socket.port());
     if let Some(&((ref id, _), _)) = opts.tls_data.as_ref() {
-        println!(" TLS certificate from \"{}\"...", id);
+        print!(" TLS certificate from \"{}\"", id);
     } else {
-        println!("out TLS...");
+        print!("out TLS");
     }
+    print!(" and ");
+    if let Some(ad) = opts.auth_data.as_ref() {
+        let mut itr = ad.split(':');
+        print!("basic authentication using \"{}\" as username and ", itr.next().unwrap());
+        if let Some(p) = itr.next() {
+            print!("\"{}\" as", p);
+        } else {
+            print!("no");
+        }
+        print!(" password");
+    } else {
+        print!("no authentication");
+    }
+    println!("...");
     println!("Ctrl-C to stop.");
     println!();
 

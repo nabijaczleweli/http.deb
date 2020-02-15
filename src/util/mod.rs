@@ -4,11 +4,11 @@
 mod os;
 mod content_encoding;
 
-use std::f64;
-use std::cmp;
+use base64;
 use std::path::Path;
 use std::borrow::Cow;
 use rfsapi::RawFileData;
+use std::{cmp, f64, fmt};
 use url::percent_encoding;
 use iron::headers::UserAgent;
 use std::collections::HashMap;
@@ -17,6 +17,8 @@ use iron::{mime, Headers, Url};
 use std::io::{BufReader, BufRead};
 use base64::display::Base64Display;
 use std::fs::{self, FileType, File};
+use iron::headers::{HeaderFormat, Header};
+use iron::error::HttpResult as HyperResult;
 use mime_guess::{guess_mime_type_opt, get_mime_type_str};
 
 pub use self::os::*;
@@ -39,31 +41,31 @@ lazy_static! {
         ass.insert("favicon",
             Cow::Owned(format!("data:{};base64,{}",
                                get_mime_type_str("ico").unwrap(),
-                               Base64Display::standard(&include_bytes!("../../assets/favicon.ico")[..]))));
+                               Base64Display::with_config(&include_bytes!("../../assets/favicon.ico")[..], base64::STANDARD))));
         ass.insert("dir_icon",
             Cow::Owned(format!("data:{};base64,{}",
                                get_mime_type_str("gif").unwrap(),
-                               Base64Display::standard(&include_bytes!("../../assets/icons/directory_icon.gif")[..]))));
+                               Base64Display::with_config(&include_bytes!("../../assets/icons/directory_icon.gif")[..], base64::STANDARD))));
         ass.insert("file_icon",
             Cow::Owned(format!("data:{};base64,{}",
                                get_mime_type_str("gif").unwrap(),
-                               Base64Display::standard(&include_bytes!("../../assets/icons/file_icon.gif")[..]))));
+                               Base64Display::with_config(&include_bytes!("../../assets/icons/file_icon.gif")[..], base64::STANDARD))));
         ass.insert("file_binary_icon",
             Cow::Owned(format!("data:{};base64,{}",
                                get_mime_type_str("gif").unwrap(),
-                               Base64Display::standard(&include_bytes!("../../assets/icons/file_binary_icon.gif")[..]))));
+                               Base64Display::with_config(&include_bytes!("../../assets/icons/file_binary_icon.gif")[..], base64::STANDARD))));
         ass.insert("file_image_icon",
             Cow::Owned(format!("data:{};base64,{}",
                                get_mime_type_str("gif").unwrap(),
-                               Base64Display::standard(&include_bytes!("../../assets/icons/file_image_icon.gif")[..]))));
+                               Base64Display::with_config(&include_bytes!("../../assets/icons/file_image_icon.gif")[..], base64::STANDARD))));
         ass.insert("file_text_icon",
             Cow::Owned(format!("data:{};base64,{}",
                                get_mime_type_str("gif").unwrap(),
-                               Base64Display::standard(&include_bytes!("../../assets/icons/file_text_icon.gif")[..]))));
+                               Base64Display::with_config(&include_bytes!("../../assets/icons/file_text_icon.gif")[..], base64::STANDARD))));
         ass.insert("back_arrow_icon",
             Cow::Owned(format!("data:{};base64,{}",
                                get_mime_type_str("gif").unwrap(),
-                               Base64Display::standard(&include_bytes!("../../assets/icons/back_arrow_icon.gif")[..]))));
+                               Base64Display::with_config(&include_bytes!("../../assets/icons/back_arrow_icon.gif")[..], base64::STANDARD))));
         ass.insert("date", Cow::Borrowed(include_str!("../../assets/date.js")));
         ass.insert("upload", Cow::Borrowed(include_str!("../../assets/upload.js")));
         ass.insert("adjust_tz", Cow::Borrowed(include_str!("../../assets/adjust_tz.js")));
@@ -82,6 +84,30 @@ pub static USER_AGENT: &'static str = concat!("http/", env!("CARGO_PKG_VERSION")
 
 /// Index file extensions to look for if `-i` was not specified.
 pub static INDEX_EXTENSIONS: &'static [&'static str] = &["html", "htm", "shtml"];
+
+
+/// The [WWW-Authenticate header](https://tools.ietf.org/html/rfc7235#section-4.1), without parsing.
+///
+/// We don't ever receive this header, only ever send it, so this is fine.
+#[derive(Debug, Clone, Hash, PartialOrd, Ord, PartialEq, Eq)]
+pub struct WwwAuthenticate(pub Cow<'static, str>);
+
+impl Header for WwwAuthenticate {
+    fn header_name() -> &'static str {
+        "WWW-Authenticate"
+    }
+
+    /// Dummy impl returning an empty value, since we're only ever sending these
+    fn parse_header(_: &[Vec<u8>]) -> HyperResult<WwwAuthenticate> {
+        Ok(WwwAuthenticate("".into()))
+    }
+}
+
+impl HeaderFormat for WwwAuthenticate {
+    fn fmt_header(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
 
 
 /// Uppercase the first character of the supplied string.
