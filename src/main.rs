@@ -2,14 +2,17 @@ extern crate hyper_native_tls;
 extern crate trivial_colours;
 #[macro_use]
 extern crate lazy_static;
+extern crate serde_json;
 extern crate mime_guess;
 extern crate lazysort;
 extern crate brotli2;
 extern crate unicase;
 extern crate base64;
 extern crate flate2;
+extern crate rfsapi;
 extern crate bzip2;
 extern crate ctrlc;
+extern crate serde;
 #[macro_use]
 extern crate clap;
 extern crate iron;
@@ -95,7 +98,7 @@ fn result_main() -> Result<(), Error> {
             move || r.notify_one()
         })
         .unwrap();
-    let mx = Mutex::new(false);
+    let mx = Mutex::new(());
     let _ = end_handler.wait(mx.lock().unwrap()).unwrap();
     responder.close().unwrap();
 

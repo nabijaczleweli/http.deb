@@ -3,18 +3,19 @@
 
 mod content_encoding;
 
-use base64;
 use std::f64;
 use std::cmp;
 use std::fs::File;
 use std::path::Path;
 use std::borrow::Cow;
+use rfsapi::RawFileData;
 use url::percent_encoding;
 use iron::headers::UserAgent;
 use std::collections::HashMap;
 use time::{self, Duration, Tm};
 use iron::{mime, Headers, Url};
 use std::io::{BufReader, BufRead};
+use base64::display::Base64Display;
 use mime_guess::{guess_mime_type_opt, get_mime_type_str};
 
 pub use self::content_encoding::*;
@@ -34,31 +35,33 @@ lazy_static! {
     pub static ref ASSETS: HashMap<&'static str, Cow<'static, str>> = {
         let mut ass = HashMap::with_capacity(10);
         ass.insert("favicon",
-            Cow::Owned(format!("data:{};base64,{}", get_mime_type_str("ico").unwrap(), base64::encode(&include_bytes!("../../assets/favicon.ico")[..]))));
+            Cow::Owned(format!("data:{};base64,{}",
+                               get_mime_type_str("ico").unwrap(),
+                               Base64Display::standard(&include_bytes!("../../assets/favicon.ico")[..]))));
         ass.insert("dir_icon",
             Cow::Owned(format!("data:{};base64,{}",
                                get_mime_type_str("gif").unwrap(),
-                               base64::encode(&include_bytes!("../../assets/icons/directory_icon.gif")[..]))));
+                               Base64Display::standard(&include_bytes!("../../assets/icons/directory_icon.gif")[..]))));
         ass.insert("file_icon",
             Cow::Owned(format!("data:{};base64,{}",
                                get_mime_type_str("gif").unwrap(),
-                               base64::encode(&include_bytes!("../../assets/icons/file_icon.gif")[..]))));
+                               Base64Display::standard(&include_bytes!("../../assets/icons/file_icon.gif")[..]))));
         ass.insert("file_binary_icon",
             Cow::Owned(format!("data:{};base64,{}",
                                get_mime_type_str("gif").unwrap(),
-                               base64::encode(&include_bytes!("../../assets/icons/file_binary_icon.gif")[..]))));
+                               Base64Display::standard(&include_bytes!("../../assets/icons/file_binary_icon.gif")[..]))));
         ass.insert("file_image_icon",
             Cow::Owned(format!("data:{};base64,{}",
                                get_mime_type_str("gif").unwrap(),
-                               base64::encode(&include_bytes!("../../assets/icons/file_image_icon.gif")[..]))));
+                               Base64Display::standard(&include_bytes!("../../assets/icons/file_image_icon.gif")[..]))));
         ass.insert("file_text_icon",
             Cow::Owned(format!("data:{};base64,{}",
                                get_mime_type_str("gif").unwrap(),
-                               base64::encode(&include_bytes!("../../assets/icons/file_text_icon.gif")[..]))));
+                               Base64Display::standard(&include_bytes!("../../assets/icons/file_text_icon.gif")[..]))));
         ass.insert("back_arrow_icon",
             Cow::Owned(format!("data:{};base64,{}",
                                get_mime_type_str("gif").unwrap(),
-                               base64::encode(&include_bytes!("../../assets/icons/back_arrow_icon.gif")[..]))));
+                               Base64Display::standard(&include_bytes!("../../assets/icons/back_arrow_icon.gif")[..]))));
         ass.insert("date", Cow::Borrowed(include_str!("../../assets/date.js")));
         ass.insert("upload", Cow::Borrowed(include_str!("../../assets/upload.js")));
         ass.insert("adjust_tz", Cow::Borrowed(include_str!("../../assets/adjust_tz.js")));
@@ -249,5 +252,23 @@ pub fn file_icon_suffix<P: AsRef<Path>>(f: P, is_file: bool) -> &'static str {
         }
     } else {
         ""
+    }
+}
+
+/// Get the metadata of the specified file.
+///
+/// The specified path must point to a file.
+pub fn get_raw_fs_metadata<P: AsRef<Path>>(f: P) -> RawFileData {
+    let f = f.as_ref();
+    RawFileData {
+        mime_type: guess_mime_type_opt(f).unwrap_or_else(|| if file_binary(f) {
+            "application/octet-stream".parse().unwrap()
+        } else {
+            "text/plain".parse().unwrap()
+        }),
+        name: f.file_name().unwrap().to_str().expect("Failed to get requested file name").to_string(),
+        last_modified: file_time_modified(f),
+        size: f.metadata().expect("Failed to get requested file metadata").len(),
+        is_file: true,
     }
 }
