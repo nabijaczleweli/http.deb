@@ -22,9 +22,10 @@ use std::process::{ExitStatus, Command, Child, Stdio};
 use rfsapi::{RawFsApiHeader, FilesetData, RawFileData};
 use iron::{headers, status, method, mime, IronResult, Listening, Response, TypeMap, Request, Handler, Iron};
 use self::super::util::{url_path, file_hash, is_symlink, encode_str, encode_file, file_length, hash_string, html_response, file_binary, client_mobile,
-                        percent_decode, file_icon_suffix, is_actually_file, response_encoding, detect_file_as_dir, encoding_extension, file_time_modified,
-                        get_raw_fs_metadata, human_readable_size, USER_AGENT, ERROR_HTML, INDEX_EXTENSIONS, MIN_ENCODING_GAIN, MAX_ENCODING_SIZE,
-                        MIN_ENCODING_SIZE, DIRECTORY_LISTING_HTML, MOBILE_DIRECTORY_LISTING_HTML, BLACKLISTED_ENCODING_EXTENSIONS};
+                        percent_decode, file_icon_suffix, is_actually_file, is_descendant_of, response_encoding, detect_file_as_dir, encoding_extension,
+                        file_time_modified, get_raw_fs_metadata, human_readable_size, is_nonexistant_descendant_of, USER_AGENT, ERROR_HTML, INDEX_EXTENSIONS,
+                        MIN_ENCODING_GAIN, MAX_ENCODING_SIZE, MIN_ENCODING_SIZE, DIRECTORY_LISTING_HTML, MOBILE_DIRECTORY_LISTING_HTML,
+                        BLACKLISTED_ENCODING_EXTENSIONS};
 
 
 macro_rules! log {
@@ -64,6 +65,7 @@ type CacheT<Cnt> = HashMap<([u8; 32], String), Cnt>;
 pub struct HttpHandler {
     pub hosted_directory: (String, PathBuf),
     pub follow_symlinks: bool,
+    pub sandbox_symlinks: bool,
     pub check_indices: bool,
     pub writes_temp_dir: Option<(String, PathBuf)>,
     pub encoded_temp_dir: Option<(String, PathBuf)>,
@@ -76,6 +78,7 @@ impl HttpHandler {
         HttpHandler {
             hosted_directory: opts.hosted_directory.clone(),
             follow_symlinks: opts.follow_symlinks,
+            sandbox_symlinks: opts.sandbox_symlinks,
             check_indices: opts.check_indices,
             writes_temp_dir: HttpHandler::temp_subdir(&opts.temp_directory, opts.allow_writes, "writes"),
             encoded_temp_dir: HttpHandler::temp_subdir(&opts.temp_directory, opts.encode_fs, "encoded"),
@@ -144,7 +147,8 @@ impl HttpHandler {
 
         if url_err {
             self.handle_invalid_url(req, "<p>Percent-encoding decoded to invalid UTF-8.</p>")
-        } else if !req_p.exists() || (symlink && !self.follow_symlinks) {
+        } else if !req_p.exists() || (symlink && !self.follow_symlinks) ||
+                  (symlink && self.follow_symlinks && self.sandbox_symlinks && !is_descendant_of(&req_p, &self.hosted_directory.1)) {
             self.handle_nonexistant(req, req_p)
         } else if file && raw_fs {
             self.handle_get_raw_fs_file(req, req_p)
@@ -461,7 +465,16 @@ impl HttpHandler {
                                             files: req_p.read_dir()
                                                 .expect("Failed to read requested directory")
                                                 .map(|p| p.expect("Failed to iterate over requested directory"))
-                                                .filter(|f| self.follow_symlinks || !is_symlink(f.path()))
+                                                .filter(|f| {
+                    let fp = f.path();
+                    let mut symlink = false;
+                    !((!self.follow_symlinks &&
+                       (|| {
+                        symlink = is_symlink(&fp);
+                        symlink
+                    })()) ||
+                      (self.follow_symlinks && self.sandbox_symlinks && symlink && !is_descendant_of(fp, &self.hosted_directory.1)))
+                })
                                                 .map(|f| {
                     let is_file = is_actually_file(&f.file_type().expect("Failed to get file type"));
                     if is_file {
@@ -486,7 +499,9 @@ impl HttpHandler {
             if let Some(e) = INDEX_EXTENSIONS.iter()
                 .find(|e| {
                     idx.set_extension(e);
-                    idx.exists()
+                    idx.exists() &&
+                    ((!self.follow_symlinks || !self.sandbox_symlinks) ||
+                     (self.follow_symlinks && self.sandbox_symlinks && is_descendant_of(&req_p, &self.hosted_directory.1)))
                 }) {
                 if req.url.path().pop() == Some("") {
                     let r = self.handle_get_file(req, idx);
@@ -548,7 +563,15 @@ impl HttpHandler {
         let list_s = req_p.read_dir()
             .expect("Failed to read requested directory")
             .map(|p| p.expect("Failed to iterate over requested directory"))
-            .filter(|f| self.follow_symlinks || !is_symlink(f.path()))
+            .filter(|f| {
+                let fp = f.path();
+                let mut symlink = false;
+                !((!self.follow_symlinks &&
+                   (|| {
+                    symlink = is_symlink(&fp);
+                    symlink
+                })()) || (self.follow_symlinks && self.sandbox_symlinks && symlink && !is_descendant_of(fp, &self.hosted_directory.1)))
+            })
             .sorted_by(|lhs, rhs| {
                 (is_actually_file(&lhs.file_type().expect("Failed to get file type")),
                  lhs.file_name().to_str().expect("Failed to get file name").to_lowercase())
@@ -625,7 +648,15 @@ impl HttpHandler {
         let list_s = req_p.read_dir()
             .expect("Failed to read requested directory")
             .map(|p| p.expect("Failed to iterate over requested directory"))
-            .filter(|f| self.follow_symlinks || !is_symlink(f.path()))
+            .filter(|f| {
+                let fp = f.path();
+                let mut symlink = false;
+                !((!self.follow_symlinks &&
+                   (|| {
+                    symlink = is_symlink(&fp);
+                    symlink
+                })()) || (self.follow_symlinks && self.sandbox_symlinks && symlink && !is_descendant_of(fp, &self.hosted_directory.1)))
+            })
             .sorted_by(|lhs, rhs| {
                 (is_actually_file(&lhs.file_type().expect("Failed to get file type")),
                  lhs.file_name().to_str().expect("Failed to get file name").to_lowercase())
@@ -691,7 +722,7 @@ impl HttpHandler {
             return self.handle_forbidden_method(req, "-w", "write requests");
         }
 
-        let (req_p, _, url_err) = self.parse_requested_path(req);
+        let (req_p, symlink, url_err) = self.parse_requested_path(req);
 
         if url_err {
             self.handle_invalid_url(req, "<p>Percent-encoding decoded to invalid UTF-8.</p>")
@@ -701,9 +732,13 @@ impl HttpHandler {
             self.handle_invalid_url(req, "<p>Attempted to use file as directory.</p>")
         } else if req.headers.has::<headers::ContentRange>() {
             self.handle_put_partial_content(req)
+        } else if (symlink && !self.follow_symlinks) ||
+                  (symlink && self.follow_symlinks && self.sandbox_symlinks && !is_nonexistant_descendant_of(&req_p, &self.hosted_directory.1)) {
+            self.create_temp_dir(&self.writes_temp_dir);
+            self.handle_put_file(req, req_p, false)
         } else {
             self.create_temp_dir(&self.writes_temp_dir);
-            self.handle_put_file(req, req_p)
+            self.handle_put_file(req, req_p, true)
         }
     }
 
@@ -753,11 +788,17 @@ impl HttpHandler {
                                                                 ""]))
     }
 
-    fn handle_put_file(&self, req: &mut Request, req_p: PathBuf) -> IronResult<Response> {
-        let existant = req_p.exists();
+    fn handle_put_file(&self, req: &mut Request, req_p: PathBuf, legal: bool) -> IronResult<Response> {
+        let existant = !legal || req_p.exists();
         log!("{green}{}{reset} {} {magenta}{}{reset}, size: {}B",
              req.remote_addr,
-             if existant { "replaced" } else { "created" },
+             if !legal {
+                 "tried to illegally create"
+             } else if existant {
+                 "replaced"
+             } else {
+                 "created"
+             },
              req_p.display(),
              *req.headers.get::<headers::ContentLength>().expect("No Content-Length header"));
 
@@ -766,13 +807,15 @@ impl HttpHandler {
 
         io::copy(&mut req.body, &mut File::create(&temp_file_p).expect("Failed to create temp file"))
             .expect("Failed to write requested data to requested file");
-        let _ = fs::create_dir_all(req_p.parent().expect("Failed to get requested file's parent directory"));
-        fs::copy(&temp_file_p, req_p).expect("Failed to copy temp file to requested file");
+        if legal {
+            let _ = fs::create_dir_all(req_p.parent().expect("Failed to get requested file's parent directory"));
+            fs::copy(&temp_file_p, req_p).expect("Failed to copy temp file to requested file");
+        }
 
-        Ok(Response::with((if existant {
-                               status::NoContent
-                           } else {
+        Ok(Response::with((if !legal || !existant {
                                status::Created
+                           } else {
+                               status::NoContent
                            },
                            Header(headers::Server(USER_AGENT.to_string())))))
     }
@@ -786,7 +829,8 @@ impl HttpHandler {
 
         if url_err {
             self.handle_invalid_url(req, "<p>Percent-encoding decoded to invalid UTF-8.</p>")
-        } else if !req_p.exists() || (symlink && !self.follow_symlinks) {
+        } else if !req_p.exists() || (symlink && !self.follow_symlinks) ||
+                  (symlink && self.follow_symlinks && self.sandbox_symlinks && !is_descendant_of(&req_p, &self.hosted_directory.1)) {
             self.handle_nonexistant(req, req_p)
         } else {
             self.handle_delete_path(req, req_p, symlink)
@@ -949,6 +993,7 @@ impl Clone for HttpHandler {
         HttpHandler {
             hosted_directory: self.hosted_directory.clone(),
             follow_symlinks: self.follow_symlinks,
+            sandbox_symlinks: self.sandbox_symlinks,
             check_indices: self.check_indices,
             writes_temp_dir: self.writes_temp_dir.clone(),
             encoded_temp_dir: self.encoded_temp_dir.clone(),
