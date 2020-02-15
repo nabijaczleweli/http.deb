@@ -1,4 +1,4 @@
-# http [![Build status](https://travis-ci.org/thecoshman/http.svg)](https://travis-ci.org/thecoshman/http) [![Licence](https://img.shields.io/badge/license-MIT-blue.svg?style=flat)](LICENSE) [![Crates.io version](http://meritbadge.herokuapp.com/https)](https://crates.io/crates/https)
+# http [![Travis build status](https://travis-ci.org/thecoshman/http.svg)](https://travis-ci.org/thecoshman/http) [![AppVeyor build status](https://ci.appveyor.com/api/projects/status/7knk9lnptn1njro5?svg=true)](https://ci.appveyor.com/project/thecoshman/http) [![Licence](https://img.shields.io/badge/license-MIT-blue.svg?style=flat)](LICENSE) [![Crates.io version](http://meritbadge.herokuapp.com/https)](https://crates.io/crates/https)
 Host These Things Please - a basic HTTP server for hosting a folder fast and simply
 
 ## Selected features
@@ -15,9 +15,41 @@ See [the manpage](http.md) for full list.
   * [x] Multitude of information in directory indices
   * [x] Serving index files like `index.{html,htm,shtml}` from directories (disableable via `-i` switch)
   * [x] Drag&Drop to upload files (with `-w` specified)
-  * [x] Encoding of generated and filesystem-originating responses (disableable via `-e` switch)
+  * [x] Smart encoding of generated and filesystem-originating responses (disableable via `-e` switch)
+  * [x] Full Range header support
 
 ## [Manpage](http.md)
+
+## Installation
+
+If you have `cargo` installed (you're a Rust developer) all you need to do is:
+
+```sh
+cargo install https
+```
+
+Which will install `http` in the folder where all other binaries go.
+
+If, however, you're not a Rust developer, but you have `sh`-like shell, you can use an installer (works on Windows and Linux):
+
+```sh
+curl -SsL https://cdn.rawgit.com/thecoshman/http/master/install.sh | sh
+# or, if you like taking precautions
+sh -c "$(curl -SsL https://cdn.rawgit.com/thecoshman/http/master/install.sh)"
+```
+
+You can change the installation directory by setting the `PREFIX` environment variable (default - `/usr/bin`):
+
+```sh
+PREFIX=$HOME/bin curl -SsL https://cdn.rawgit.com/thecoshman/http/master/install.sh | sh
+# Windows:
+set PREFIX=D:\Akces
+curl -SsL https://cdn.rawgit.com/thecoshman/http/master/install.sh | sh
+```
+
+If you're on Windows and prefer a more guided installation (or you don't have a shell),
+you can download the Windows installer from the [latest release's page](https://github.com/thecoshman/http/releases/latest).
+(Note: you can add /D *INSTALLDIR* to installer command line to change the installation directory.)
 
 ## Aims
 The idea is to make a program that can compile down to a simple binary that can be used via Linux CLI to quickly take the current directory and serve it over HTTP. Everything should have sensible defaults such that you do not *have* to pass parameters like what port to use.

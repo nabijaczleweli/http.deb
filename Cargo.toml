@@ -5,8 +5,12 @@ description = "Host These Things Please - a basic http server for hosting a fold
 repository = "https://github.com/thecoshman/http"
 readme = "README.md"
 keywords = ["http", "server", "https", "file", "directory"]
+categories = ["network-programming", "web-programming::http-server"]
 license = "MIT"
-version = "1.0.0"
+build = "build.rs"
+# Remember to also update in appveyor.yml
+version = "1.1.0"
+# Remember to also update in http.md
 authors = ["thecoshman <thecoshman@gmail.com>",
            "nabijaczleweli <nabijaczleweli@gmail.com>"]
 
@@ -15,6 +19,7 @@ lazy_static = "0.2"
 mime_guess = "1.8"
 lazysort = "0.1"
 brotli2 = "0.2"
+unicase = "1.4"
 base64 = "0.2"
 flate2 = "0.2"
 bzip2 = "0.3"
@@ -25,8 +30,11 @@ url = "1.2"
 md6 = "1.1"
 
 [dependencies.trivial_colours]
-version = "0.2"
+version = "0.3"
 default-features = false
+
+[build-dependencies]
+embed-resource = "1.1"
 
 
 [[bin]]

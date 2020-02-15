@@ -6,14 +6,11 @@
     <meta name="author" content="http developers">
     <meta name="description" content="Directory listing of {0}">
     <link href="{favicon}" rel="icon" type="image/x-icon" />
+    <script type="text/javascript">{date}</script>
+    <script type="text/javascript">{adjust_tz}</script>
     {1}
     <title>Directory listing — {0}</title>
     <style type="text/css">
-      ul {
-        margin-top: 0;
-        margin-bottom: 0;
-      }
-
       abbr[title] {
         border-bottom: none;
         text-decoration: none;
@@ -23,8 +20,57 @@
         margin-bottom: 0;
       }
 
+      table {
+        border-collapse: collapse;
+      }
+
       td:nth-child(2), td:nth-child(3) {
         padding-right: 5pt;
+      }
+
+      td:nth-child(3) a, td:nth-child(4) a {
+        color: inherit;
+      }
+
+      td > a {
+        display: block;
+        text-decoration: none;
+      }
+
+      tr:hover {
+        background-color: #eee;
+      }
+
+      tr {
+        border-bottom: solid 1px #ccc;
+      }
+
+      tr:last-child {
+        border-bottom: none;
+      }
+
+      .dir_icon:before {
+        content: url('{dir_icon}');
+      }
+
+      .file_icon:before {
+        content: url('{file_icon}');
+      }
+
+      .file_binary_icon:before {
+        content: url('{file_binary_icon}');
+      }
+
+      .file_image_icon:before {
+        content: url('{file_image_icon}');
+      }
+
+      .file_text_icon:before {
+        content: url('{file_text_icon}');
+      }
+
+      .back_arrow_icon:before {
+        content: url('{back_arrow_icon}');
       }
     </style>
   </head>
@@ -32,12 +78,13 @@
     <div>
       <p class="pre-list">The requested directory {0} contains the following files:</p>
       <table>
-        <tr><th></th> <th>Name</th> <th>Last modified</th> <th>Size</th></tr>
+        <tr><th></th> <th>Name</th> <th>Last modified (UTC)</th> <th>Size</th></tr>
         {2}
         {3}
       </table>
     </div>
     <p></p>
+    {4}
     <hr />
     <p>
       <a href="https://github.com/thecoshman/http">Host These Things Please</a> — a basic HTTP server for hosting a folder fast and simply

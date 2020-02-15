@@ -6,15 +6,16 @@ mod content_encoding;
 use base64;
 use std::f64;
 use std::cmp;
-use iron::Url;
 use std::fs::File;
 use std::path::Path;
 use std::borrow::Cow;
 use url::percent_encoding;
+use iron::headers::UserAgent;
 use std::collections::HashMap;
 use time::{self, Duration, Tm};
+use iron::{mime, Headers, Url};
 use std::io::{BufReader, BufRead};
-use mime_guess::get_mime_type_str;
+use mime_guess::{guess_mime_type_opt, get_mime_type_str};
 
 pub use self::content_encoding::*;
 
@@ -25,10 +26,13 @@ pub static ERROR_HTML: &'static str = include_str!("../../assets/error.html");
 /// The HTML page to use as template for a requested directory's listing.
 pub static DIRECTORY_LISTING_HTML: &'static str = include_str!("../../assets/directory_listing.html");
 
+/// The HTML page to use as template for a requested directory's listing for mobile devices.
+pub static MOBILE_DIRECTORY_LISTING_HTML: &'static str = include_str!("../../assets/directory_listing_mobile.html");
+
 lazy_static! {
     /// Collection of data to be injected into generated responses.
     pub static ref ASSETS: HashMap<&'static str, Cow<'static, str>> = {
-        let mut ass = HashMap::with_capacity(8);
+        let mut ass = HashMap::with_capacity(10);
         ass.insert("favicon",
             Cow::Owned(format!("data:{};base64,{}", get_mime_type_str("ico").unwrap(), base64::encode(include_bytes!("../../assets/favicon.ico")))));
         ass.insert("dir_icon",
@@ -55,7 +59,9 @@ lazy_static! {
             Cow::Owned(format!("data:{};base64,{}",
                                get_mime_type_str("gif").unwrap(),
                                base64::encode(include_bytes!("../../assets/icons/back_arrow_icon.gif")))));
-        ass.insert("drag_drop", Cow::Borrowed(include_str!("../../assets/drag_drop.js")));
+        ass.insert("date", Cow::Borrowed(include_str!("../../assets/date.js")));
+        ass.insert("upload", Cow::Borrowed(include_str!("../../assets/upload.js")));
+        ass.insert("adjust_tz", Cow::Borrowed(include_str!("../../assets/adjust_tz.js")));
         ass
     };
 }
@@ -142,7 +148,8 @@ pub fn url_path(url: &Url) -> String {
         "/".to_string()
     } else {
         path.into_iter().fold("".to_string(),
-                              |cur, pp| format!("{}/{}", cur, percent_decode(pp).unwrap_or(Cow::Borrowed("<incorrect UTF8>"))))[1..]
+                              |cur, pp| format!("{}/{}", cur, percent_decode(pp).unwrap_or(Cow::Borrowed("<incorrect UTF8>"))))
+            [1..]
             .to_string()
     }
 }
@@ -161,11 +168,11 @@ pub fn percent_decode(s: &str) -> Option<Cow<str>> {
     percent_encoding::percent_decode(s.as_bytes()).decode_utf8().ok()
 }
 
-/// Get the timestamp of the file's last modification as a `time::Tm`.
+/// Get the timestamp of the file's last modification as a `time::Tm` in UTC.
 pub fn file_time_modified(f: &Path) -> Tm {
-    match f.metadata().unwrap().modified().unwrap().elapsed() {
-        Ok(dur) => time::now() - Duration::from_std(dur).unwrap(),
-        Err(ste) => time::now() + Duration::from_std(ste.duration()).unwrap(),
+    match f.metadata().expect("Failed to get file metadata").modified().expect("Failed to get file last modified date").elapsed() {
+        Ok(dur) => time::now_utc() - Duration::from_std(dur).unwrap(),
+        Err(ste) => time::now_utc() + Duration::from_std(ste.duration()).unwrap(),
     }
 }
 
@@ -221,5 +228,26 @@ pub fn human_readable_size(s: u64) -> String {
                 val.round()
             }
             .to_string() + " " + ["B", "KiB", "MiB", "GiB", "TiB", "PiB", "EiB", "ZiB", "YiB"][cmp::max(exp, 0) as usize]
+    }
+}
+
+/// Check if, given the request headers, the client should be considered a mobile device.
+pub fn client_mobile(hdr: &Headers) -> bool {
+    hdr.get::<UserAgent>().map(|s| s.contains("Mobi") || s.contains("mobi")).unwrap_or(false)
+}
+
+/// Get the suffix for the icon to use to represent the given file.
+pub fn file_icon_suffix<P: AsRef<Path>>(f: P, is_file: bool) -> &'static str {
+    if is_file {
+        match guess_mime_type_opt(&f) {
+            Some(mime::Mime(mime::TopLevel::Image, ..)) |
+            Some(mime::Mime(mime::TopLevel::Video, ..)) => "_image",
+            Some(mime::Mime(mime::TopLevel::Text, ..)) => "_text",
+            Some(mime::Mime(mime::TopLevel::Application, ..)) => "_binary",
+            None => if file_binary(&f) { "" } else { "_text" },
+            _ => "",
+        }
+    } else {
+        ""
     }
 }
