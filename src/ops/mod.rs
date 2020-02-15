@@ -1,6 +1,5 @@
 use md6;
 use std::iter;
-use time::now;
 use serde_json;
 use std::borrow::Cow;
 use std::net::IpAddr;
@@ -14,26 +13,29 @@ use std::fs::{self, File};
 use std::default::Default;
 use rand::{Rng, thread_rng};
 use iron::modifiers::Header;
+use iron::url::Url as GenericUrl;
 use self::super::{Options, Error};
 use mime_guess::guess_mime_type_opt;
 use hyper_native_tls::NativeTlsServer;
 use std::collections::{BTreeMap, HashMap};
 use std::io::{self, SeekFrom, Write, Read, Seek};
-use trivial_colours::{Reset as CReset, Colour as C};
 use std::process::{ExitStatus, Command, Child, Stdio};
 use rfsapi::{RawFsApiHeader, FilesetData, RawFileData};
 use rand::distributions::uniform::Uniform as UniformDistribution;
 use rand::distributions::Alphanumeric as AlphanumericDistribution;
 use iron::{headers, status, method, mime, IronResult, Listening, Response, TypeMap, Request, Handler, Iron};
-use self::super::util::{WwwAuthenticate, url_path, file_hash, is_symlink, encode_str, encode_file, file_length, hash_string, html_response, file_binary,
-                        client_mobile, percent_decode, file_icon_suffix, is_actually_file, is_descendant_of, response_encoding, detect_file_as_dir,
-                        encoding_extension, file_time_modified, get_raw_fs_metadata, human_readable_size, is_nonexistant_descendant_of, USER_AGENT, ERROR_HTML,
-                        INDEX_EXTENSIONS, MIN_ENCODING_GAIN, MAX_ENCODING_SIZE, MIN_ENCODING_SIZE, DIRECTORY_LISTING_HTML, MOBILE_DIRECTORY_LISTING_HTML,
-                        BLACKLISTED_ENCODING_EXTENSIONS};
+use self::super::util::{WwwAuthenticate, CommaList, Dav, url_path, file_hash, is_symlink, encode_str, encode_file, file_length, hash_string, html_response,
+                        file_binary, client_mobile, percent_decode, file_icon_suffix, is_actually_file, is_descendant_of, response_encoding, detect_file_as_dir,
+                        encoding_extension, file_time_modified, file_time_modified_p, get_raw_fs_metadata, human_readable_size, is_nonexistant_descendant_of,
+                        USER_AGENT, ERROR_HTML, INDEX_EXTENSIONS, MIN_ENCODING_GAIN, MAX_ENCODING_SIZE, MIN_ENCODING_SIZE, DAV_LEVEL_1_METHODS,
+                        DIRECTORY_LISTING_HTML, MOBILE_DIRECTORY_LISTING_HTML, BLACKLISTED_ENCODING_EXTENSIONS};
 
 
 macro_rules! log {
     ($do_log:expr, $fmt:expr) => {
+        use time::now;
+        use trivial_colours::{Reset as CReset, Colour as C};
+
         if $do_log {
             print!("{}[{}]{} ", C::Cyan, now().strftime("%F %T").unwrap(), CReset);
             println!(concat!($fmt, "{black:.0}{red:.0}{green:.0}{yellow:.0}{blue:.0}{magenta:.0}{cyan:.0}{white:.0}{reset:.0}"),
@@ -49,6 +51,9 @@ macro_rules! log {
         }
     };
     ($do_log:expr, $fmt:expr, $($arg:tt)*) => {
+        use time::now;
+        use trivial_colours::{Reset as CReset, Colour as C};
+
         if $do_log {
             print!("{}[{}]{} ", C::Cyan, now().strftime("%F %T").unwrap(), CReset);
             println!(concat!($fmt, "{black:.0}{red:.0}{green:.0}{yellow:.0}{blue:.0}{magenta:.0}{cyan:.0}{white:.0}{reset:.0}"),
@@ -66,6 +71,8 @@ macro_rules! log {
     };
 }
 
+mod webdav;
+
 
 // TODO: ideally this String here would be Encoding instead but hyper is bad
 type CacheT<Cnt> = HashMap<([u8; 32], String), Cnt>;
@@ -76,6 +83,7 @@ pub struct HttpHandler {
     pub sandbox_symlinks: bool,
     pub check_indices: bool,
     pub log: bool,
+    pub webdav: bool,
     pub global_auth_data: Option<(String, Option<String>)>,
     pub path_auth_data: BTreeMap<String, Option<(String, Option<String>)>>,
     pub writes_temp_dir: Option<(String, PathBuf)>,
@@ -109,6 +117,7 @@ impl HttpHandler {
             sandbox_symlinks: opts.sandbox_symlinks,
             check_indices: opts.check_indices,
             log: opts.loglevel < LogLevel::NoServeStatus,
+            webdav: opts.webdav,
             global_auth_data: global_auth_data,
             path_auth_data: path_auth_data,
             writes_temp_dir: HttpHandler::temp_subdir(&opts.temp_directory, opts.allow_writes, "writes"),
@@ -119,7 +128,7 @@ impl HttpHandler {
     }
 
     pub fn clean_temp_dirs(temp_dir: &(String, PathBuf), loglevel: LogLevel) {
-        for (temp_name, temp_dir) in ["writes", "encoded", "tls"].into_iter().flat_map(|tn| HttpHandler::temp_subdir(temp_dir, true, tn)) {
+        for (temp_name, temp_dir) in ["writes", "encoded", "tls"].iter().flat_map(|tn| HttpHandler::temp_subdir(temp_dir, true, tn)) {
             if temp_dir.exists() && fs::remove_dir_all(&temp_dir).is_ok() {
                 log!(loglevel < LogLevel::NoServeStatus, "Deleted temp dir {magenta}{}{reset}", temp_name);
             }
@@ -151,7 +160,7 @@ impl Handler for HttpHandler {
             }
         }
 
-        match req.method {
+        let mut resp = match req.method {
             method::Options => self.handle_options(req),
             method::Get => self.handle_get(req),
             method::Put => self.handle_put(req),
@@ -163,8 +172,27 @@ impl Handler for HttpHandler {
                 })
             }
             method::Trace => self.handle_trace(req),
+            method::Extension(ref ext) => {
+                if self.webdav {
+                    match &ext[..] {
+                        "COPY" => self.handle_webdav_copy(req),
+                        "MKCOL" => self.handle_webdav_mkcol(req),
+                        "MOVE" => self.handle_webdav_move(req),
+                        "PROPFIND" => self.handle_webdav_propfind(req),
+                        "PROPPATCH" => self.handle_webdav_proppatch(req),
+
+                        _ => self.handle_bad_method(req),
+                    }
+                } else {
+                    self.handle_bad_method(req)
+                }
+            }
             _ => self.handle_bad_method(req),
+        }?;
+        if self.webdav {
+            resp.headers.set(Dav::LEVEL_1);
         }
+        Ok(resp)
     }
 }
 
@@ -240,9 +268,19 @@ impl HttpHandler {
 
     fn handle_options(&self, req: &mut Request) -> IronResult<Response> {
         log!(self.log, "{green}{}{reset} asked for {red}OPTIONS{reset}", req.remote_addr);
-        Ok(Response::with((status::NoContent,
-                           Header(headers::Server(USER_AGENT.to_string())),
-                           Header(headers::Allow(vec![method::Options, method::Get, method::Put, method::Delete, method::Head, method::Trace])))))
+
+        let mut allowed_methods = Vec::with_capacity(6 +
+                                                     if self.webdav {
+            DAV_LEVEL_1_METHODS.len()
+        } else {
+            0
+        });
+        allowed_methods.extend_from_slice(&[method::Options, method::Get, method::Put, method::Delete, method::Head, method::Trace]);
+        if self.webdav {
+            allowed_methods.extend_from_slice(&DAV_LEVEL_1_METHODS);
+        }
+
+        Ok(Response::with((status::NoContent, Header(headers::Server(USER_AGENT.to_string())), Header(headers::Allow(allowed_methods)))))
     }
 
     fn handle_get(&self, req: &mut Request) -> IronResult<Response> {
@@ -290,7 +328,12 @@ impl HttpHandler {
                                                 html_response(ERROR_HTML, &["400 Bad Request", "The request URL was invalid.", cause]))
     }
 
+    #[inline(always)]
     fn handle_nonexistant(&self, req: &mut Request, req_p: PathBuf) -> IronResult<Response> {
+        self.handle_nonexistant_status(req, req_p, status::NotFound)
+    }
+
+    fn handle_nonexistant_status(&self, req: &mut Request, req_p: PathBuf, status: status::Status) -> IronResult<Response> {
         log!(self.log,
              "{green}{}{reset} requested to {red}{}{reset} nonexistant entity {magenta}{}{reset}",
              req.remote_addr,
@@ -299,9 +342,9 @@ impl HttpHandler {
 
         let url_p = url_path(&req.url);
         self.handle_generated_response_encoding(req,
-                                                status::NotFound,
+                                                status,
                                                 html_response(ERROR_HTML,
-                                                              &["404 Not Found", &format!("The requested entity \"{}\" doesn't exist.", url_p), ""]))
+                                                              &[&status.to_string()[..], &format!("The requested entity \"{}\" doesn't exist.", url_p), ""]))
     }
 
     fn handle_get_raw_fs_file(&self, req: &mut Request, req_p: PathBuf) -> IronResult<Response> {
@@ -370,7 +413,7 @@ impl HttpHandler {
 
         Ok(Response::with((status::PartialContent,
                            (Header(headers::Server(USER_AGENT.to_string())),
-                            Header(headers::LastModified(headers::HttpDate(file_time_modified(&req_p)))),
+                            Header(headers::LastModified(headers::HttpDate(file_time_modified_p(&req_p)))),
                             Header(headers::ContentRange(headers::ContentRangeSpec::Bytes {
                                 range: Some((from, to)),
                                 instance_length: Some(file_length(&f.metadata().expect("Failed to get requested file metadata"), &req_p)),
@@ -416,13 +459,14 @@ impl HttpHandler {
 
     fn handle_get_file_opened_range(&self, req_p: PathBuf, s: SeekFrom, b_from: u64, clen: u64, mt: Mime) -> IronResult<Response> {
         let mut f = File::open(&req_p).expect("Failed to open requested file");
-        let flen = file_length(&f.metadata().expect("Failed to get requested file metadata"), &req_p);
+        let fmeta = f.metadata().expect("Failed to get requested file metadata");
+        let flen = file_length(&fmeta, &req_p);
         f.seek(s).expect("Failed to seek requested file");
 
         Ok(Response::with((status::PartialContent,
                            f,
                            (Header(headers::Server(USER_AGENT.to_string())),
-                            Header(headers::LastModified(headers::HttpDate(file_time_modified(&req_p)))),
+                            Header(headers::LastModified(headers::HttpDate(file_time_modified(&fmeta)))),
                             Header(headers::ContentRange(headers::ContentRangeSpec::Bytes {
                                 range: Some((b_from, flen - 1)),
                                 instance_length: Some(flen),
@@ -457,7 +501,7 @@ impl HttpHandler {
 
         Ok(Response::with((status::NoContent,
                            Header(headers::Server(USER_AGENT.to_string())),
-                           Header(headers::LastModified(headers::HttpDate(file_time_modified(&req_p)))),
+                           Header(headers::LastModified(headers::HttpDate(file_time_modified_p(&req_p)))),
                            Header(headers::ContentRange(headers::ContentRangeSpec::Bytes {
                                range: Some((from, to)),
                                instance_length: Some(file_length(&req_p.metadata().expect("Failed to get requested file metadata"), &req_p)),
@@ -486,7 +530,7 @@ impl HttpHandler {
         } else {
             Ok(Response::with((status::Ok,
                                (Header(headers::Server(USER_AGENT.to_string())),
-                                Header(headers::LastModified(headers::HttpDate(file_time_modified(&req_p)))),
+                                Header(headers::LastModified(headers::HttpDate(file_time_modified(&metadata)))),
                                 Header(headers::AcceptRanges(vec![headers::RangeUnit::Bytes]))),
                                req_p.as_path(),
                                Header(headers::ContentLength(file_length(&metadata, &req_p))),
@@ -520,7 +564,7 @@ impl HttpHandler {
                     Some(&(ref resp_p, false)) => {
                         return Ok(Response::with((status::Ok,
                                                   Header(headers::Server(USER_AGENT.to_string())),
-                                                  Header(headers::LastModified(headers::HttpDate(file_time_modified(resp_p)))),
+                                                  Header(headers::LastModified(headers::HttpDate(file_time_modified_p(resp_p)))),
                                                   Header(headers::AcceptRanges(vec![headers::RangeUnit::Bytes])),
                                                   resp_p.as_path(),
                                                   mt)));
@@ -571,7 +615,7 @@ impl HttpHandler {
 
         Ok(Response::with((status::Ok,
                            (Header(headers::Server(USER_AGENT.to_string())),
-                            Header(headers::LastModified(headers::HttpDate(file_time_modified(&req_p)))),
+                            Header(headers::LastModified(headers::HttpDate(file_time_modified_p(&req_p)))),
                             Header(headers::AcceptRanges(vec![headers::RangeUnit::Bytes]))),
                            req_p.as_path(),
                            Header(headers::ContentLength(file_length(&req_p.metadata().expect("Failed to get requested file metadata"), &req_p))),
@@ -595,11 +639,10 @@ impl HttpHandler {
                     let fp = f.path();
                     let mut symlink = false;
                     !((!self.follow_symlinks &&
-                       (|| {
+                       {
                         symlink = is_symlink(&fp);
                         symlink
-                    })()) ||
-                      (self.follow_symlinks && self.sandbox_symlinks && symlink && !is_descendant_of(fp, &self.hosted_directory.1)))
+                    }) || (self.follow_symlinks && self.sandbox_symlinks && symlink && !is_descendant_of(fp, &self.hosted_directory.1)))
                 })
                                                 .map(|f| {
                     let is_file = is_actually_file(&f.file_type().expect("Failed to get file type"));
@@ -609,7 +652,7 @@ impl HttpHandler {
                         RawFileData {
                             mime_type: "text/directory".parse().unwrap(),
                             name: f.file_name().into_string().expect("Failed to get file name"),
-                            last_modified: file_time_modified(&f.path()),
+                            last_modified: file_time_modified_p(&f.path()),
                             size: 0,
                             is_file: false,
                         }
@@ -682,8 +725,7 @@ impl HttpHandler {
             format!("<a href=\"/{up_path}{up_path_slash}\" class=\"list entry top\"><span class=\"back_arrow_icon\">Parent directory</span></a> \
                      <a href=\"/{up_path}{up_path_slash}\" class=\"list entry bottom\"><span class=\"marker\">@</span>\
                        <span class=\"datetime\">{} UTC</span></a>",
-                    file_time_modified(req_p.parent()
-                            .expect("Failed to get requested directory's parent directory"))
+                    file_time_modified_p(req_p.parent().expect("Failed to get requested directory's parent directory"))
                         .strftime("%F %T")
                         .unwrap(),
                     up_path = slash_idx.map(|i| &rel_noslash[0..i]).unwrap_or(""),
@@ -696,10 +738,10 @@ impl HttpHandler {
                 let fp = f.path();
                 let mut symlink = false;
                 !((!self.follow_symlinks &&
-                   (|| {
+                   {
                     symlink = is_symlink(&fp);
                     symlink
-                })()) || (self.follow_symlinks && self.sandbox_symlinks && symlink && !is_descendant_of(fp, &self.hosted_directory.1)))
+                }) || (self.follow_symlinks && self.sandbox_symlinks && symlink && !is_descendant_of(fp, &self.hosted_directory.1)))
             })
             .sorted_by(|lhs, rhs| {
                 (is_actually_file(&lhs.file_type().expect("Failed to get file type")),
@@ -709,6 +751,7 @@ impl HttpHandler {
             })
             .fold("".to_string(), |cur, f| {
                 let is_file = is_actually_file(&f.file_type().expect("Failed to get file type"));
+                let fmeta = f.metadata().expect("Failed to get requested file metadata");
                 let fname = f.file_name().into_string().expect("Failed to get file name");
                 let path = f.path();
 
@@ -721,10 +764,10 @@ impl HttpHandler {
                         path.file_name().map(|p| p.to_str().expect("Filename not UTF-8").replace('.', "_")).as_ref().unwrap_or(&fname),
                         fname,
                         if is_file { "" } else { "/" },
-                        file_time_modified(&path).strftime("%F %T").unwrap(),
+                        file_time_modified(&fmeta).strftime("%F %T").unwrap(),
                         if is_file { "<span class=\"size\">" } else { "" },
                         if is_file {
-                            human_readable_size(file_length(&f.metadata().expect("Failed to get requested file metadata"), &path))
+                            human_readable_size(file_length(&fmeta, &path))
                         } else {
                             String::new()
                         },
@@ -771,7 +814,7 @@ impl HttpHandler {
                          <td><a href=\"/{up_path}{up_path_slash}\">Parent directory</a></td> \
                          <td><a href=\"/{up_path}{up_path_slash}\" class=\"datetime\">{}</a></td> \
                          <td><a href=\"/{up_path}{up_path_slash}\">&nbsp;</a></td></tr>",
-                    file_time_modified(req_p.parent().expect("Failed to get requested directory's parent directory")).strftime("%F %T").unwrap(),
+                    file_time_modified_p(req_p.parent().expect("Failed to get requested directory's parent directory")).strftime("%F %T").unwrap(),
                     up_path = slash_idx.map(|i| &rel_noslash[0..i]).unwrap_or(""),
                     up_path_slash = if slash_idx.is_some() { "/" } else { "" })
         };
@@ -782,10 +825,10 @@ impl HttpHandler {
                 let fp = f.path();
                 let mut symlink = false;
                 !((!self.follow_symlinks &&
-                   (|| {
+                   {
                     symlink = is_symlink(&fp);
                     symlink
-                })()) || (self.follow_symlinks && self.sandbox_symlinks && symlink && !is_descendant_of(fp, &self.hosted_directory.1)))
+                }) || (self.follow_symlinks && self.sandbox_symlinks && symlink && !is_descendant_of(fp, &self.hosted_directory.1)))
             })
             .sorted_by(|lhs, rhs| {
                 (is_actually_file(&lhs.file_type().expect("Failed to get file type")),
@@ -795,9 +838,10 @@ impl HttpHandler {
             })
             .fold("".to_string(), |cur, f| {
                 let is_file = is_actually_file(&f.file_type().expect("Failed to get file type"));
+                let fmeta = f.metadata().expect("Failed to get requested file metadata");
                 let fname = f.file_name().into_string().expect("Failed to get file name");
                 let path = f.path();
-                let len = file_length(&f.metadata().expect("Failed to get requested file metadata"), &path);
+                let len = file_length(&fmeta, &path);
 
                 format!("{}<tr><td><a href=\"{path}{fname}\" id=\"{}\" class=\"{}{}_icon\"></a></td> \
                            <td><a href=\"{path}{fname}\">{}{}</a></td> <td><a href=\"{path}{fname}\" class=\"datetime\">{}</a></td> \
@@ -808,7 +852,7 @@ impl HttpHandler {
                         file_icon_suffix(&path, is_file),
                         fname,
                         if is_file { "" } else { "/" },
-                        file_time_modified(&path).strftime("%F %T").unwrap(),
+                        file_time_modified(&fmeta).strftime("%F %T").unwrap(),
                         if is_file { "<abbr title=\"" } else { "&nbsp;" },
                         if is_file {
                             len.to_string()
@@ -857,7 +901,14 @@ impl HttpHandler {
         if url_err {
             self.handle_invalid_url(req, "<p>Percent-encoding decoded to invalid UTF-8.</p>")
         } else if req_p.is_dir() {
-            self.handle_disallowed_method(req, &[method::Options, method::Get, method::Delete, method::Head, method::Trace], "directory")
+            self.handle_disallowed_method(req,
+                                          &[&[method::Options, method::Get, method::Delete, method::Head, method::Trace],
+                                            if self.webdav {
+                                                &DAV_LEVEL_1_METHODS[..]
+                                            } else {
+                                                &[]
+                                            }],
+                                          "directory")
         } else if detect_file_as_dir(&req_p) {
             self.handle_invalid_url(req, "<p>Attempted to use file as directory.</p>")
         } else if req.headers.has::<headers::ContentRange>() {
@@ -872,8 +923,9 @@ impl HttpHandler {
         }
     }
 
-    fn handle_disallowed_method(&self, req: &mut Request, allowed: &[method::Method], tpe: &str) -> IronResult<Response> {
+    fn handle_disallowed_method(&self, req: &mut Request, allowed: &[&[method::Method]], tpe: &str) -> IronResult<Response> {
         let allowed_s = allowed.iter()
+            .flat_map(|mms| mms.iter())
             .enumerate()
             .fold("".to_string(), |cur, (i, m)| {
                 cur + &m.to_string() +
@@ -900,7 +952,7 @@ impl HttpHandler {
                           &["405 Method Not Allowed", &format!("Can't {} on a {}.", req.method, tpe), &format!("<p>Allowed methods: {}</p>", allowed_s)]);
         self.handle_generated_response_encoding(req, status::MethodNotAllowed, resp_text)
             .map(|mut r| {
-                r.headers.set(headers::Allow(allowed.to_vec()));
+                r.headers.set(headers::Allow(allowed.iter().flat_map(|mms| mms.iter()).cloned().collect()));
                 r
             })
     }
@@ -958,7 +1010,7 @@ impl HttpHandler {
             return self.handle_forbidden_method(req, "-w", "write requests");
         }
 
-        let (req_p, symlink, url_err) = self.parse_requested_path_custom_symlink(req, false);
+        let (req_p, symlink, url_err) = self.parse_requested_path_custom_symlink(req.url.as_ref(), false);
 
         if url_err {
             self.handle_invalid_url(req, "<p>Percent-encoding decoded to invalid UTF-8.</p>")
@@ -971,11 +1023,11 @@ impl HttpHandler {
     }
 
     fn handle_delete_path(&self, req: &mut Request, req_p: PathBuf, symlink: bool) -> IronResult<Response> {
-        let file = is_actually_file(&req_p.metadata().expect("failed to get file metadata").file_type());
+        let ft = req_p.metadata().expect("failed to get file metadata").file_type();
         log!(self.log,
              "{green}{}{reset} deleted {blue}{} {magenta}{}{reset}",
              req.remote_addr,
-             if file {
+             if is_actually_file(&ft) {
                  "file"
              } else if symlink {
                  "symlink"
@@ -984,7 +1036,7 @@ impl HttpHandler {
              },
              req_p.display());
 
-        if file {
+        if is_actually_file(&ft) {
             fs::remove_file(req_p).expect("Failed to remove requested file");
         } else {
             fs::remove_dir_all(req_p).expect(if symlink {
@@ -1038,8 +1090,15 @@ impl HttpHandler {
              req.remote_addr,
              req.method);
 
-        let last_p = format!("<p>Unsupported request method: {}.<br />\nSupported methods: OPTIONS, GET, PUT, DELETE, HEAD and TRACE.</p>",
-                             req.method);
+        let last_p = format!("<p>Unsupported request method: {}.<br />\nSupported methods: {}{}OPTIONS, GET, PUT, DELETE, HEAD, and TRACE.</p>",
+                             req.method,
+                             CommaList(if self.webdav {
+                                     &DAV_LEVEL_1_METHODS[..]
+                                 } else {
+                                     &[][..]
+                                 }
+                                 .iter()),
+                             if self.webdav { ", " } else { "" });
         self.handle_generated_response_encoding(req,
                                                 status::NotImplemented,
                                                 html_response(ERROR_HTML, &["501 Not Implemented", "This operation was not implemented.", &last_p]))
@@ -1101,15 +1160,12 @@ impl HttpHandler {
     }
 
     fn parse_requested_path(&self, req: &Request) -> (PathBuf, bool, bool) {
-        self.parse_requested_path_custom_symlink(req, true)
+        self.parse_requested_path_custom_symlink(req.url.as_ref(), true)
     }
 
-    fn parse_requested_path_custom_symlink(&self, req: &Request, follow_symlinks: bool) -> (PathBuf, bool, bool) {
-        req.url
-            .as_ref()
-            .path_segments()
+    fn parse_requested_path_custom_symlink(&self, req_url: &GenericUrl, follow_symlinks: bool) -> (PathBuf, bool, bool) {
+        req_url.path_segments()
             .unwrap()
-            .into_iter()
             .filter(|p| !p.is_empty())
             .fold((self.hosted_directory.1.clone(), false, false), |(mut cur, mut sk, mut err), pp| {
                 if let Some(pp) = percent_decode(pp) {
@@ -1145,6 +1201,7 @@ impl Clone for HttpHandler {
             sandbox_symlinks: self.sandbox_symlinks,
             check_indices: self.check_indices,
             log: self.log,
+            webdav: self.webdav,
             global_auth_data: self.global_auth_data.clone(),
             path_auth_data: self.path_auth_data.clone(),
             writes_temp_dir: self.writes_temp_dir.clone(),

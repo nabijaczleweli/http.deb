@@ -4,12 +4,12 @@ name = "https"
 description = "Host These Things Please - a basic http server for hosting a folder fast and simply"
 repository = "https://github.com/thecoshman/http"
 readme = "README.md"
-keywords = ["http", "server", "https", "file", "directory"]
+keywords = ["http", "server", "https", "webdav", "directory"]
 categories = ["network-programming", "web-programming::http-server"]
 license = "MIT"
 build = "build.rs"
 # Remember to also update in appveyor.yml
-version = "1.7.0"
+version = "1.8.0"
 # Remember to also update in http.md
 authors = ["thecoshman <rust@thecoshman.com>",
            "nabijaczleweli <nabijaczleweli@gmail.com>",
@@ -22,12 +22,15 @@ lazy_static = "1.4"
 serde_json = "0.9"
 mime_guess = "1.8"
 tabwriter = "1.1"
+itertools = "0.8"
 lazysort = "0.2"
 brotli2 = "0.3"
 unicase = "2.4"
+walkdir = "2.2"
 base64 = "0.10"
 flate2 = "1.0"
 rfsapi = "0.1"
+xml-rs = "0.8"
 bzip2 = "0.3"
 ctrlc = "3.1"
 regex = "1.2"
@@ -44,6 +47,13 @@ default-features = false
 [dependencies.iron]
 version = "0.6"
 features = ["hyper-native-tls"]
+
+[target.'cfg(target_os = "windows")'.dependencies.winapi]
+version = "0.3"
+features = ["fileapi"]
+
+[target.'cfg(not(target_os = "windows"))'.dependencies.os-str-generic]
+version = "0.2"
 
 [target.'cfg(not(any(target_os = "windows", target_os = "macos")))'.dependencies.libc]
 version = "0.2"

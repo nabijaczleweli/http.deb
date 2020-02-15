@@ -1,17 +1,23 @@
 extern crate hyper_native_tls;
 extern crate percent_encoding;
 extern crate trivial_colours;
+#[cfg(not(target_os = "windows"))]
+extern crate os_str_generic;
 #[macro_use]
 extern crate lazy_static;
 extern crate serde_json;
 extern crate mime_guess;
+extern crate itertools;
 extern crate tabwriter;
 extern crate lazysort;
 extern crate brotli2;
 extern crate unicase;
+extern crate walkdir;
 extern crate base64;
 extern crate flate2;
 extern crate rfsapi;
+#[cfg(target_os = "windows")]
+extern crate winapi;
 extern crate bzip2;
 extern crate ctrlc;
 extern crate serde;
@@ -24,6 +30,7 @@ extern crate libc;
 extern crate rand;
 extern crate time;
 extern crate md6;
+extern crate xml;
 
 mod error;
 mod options;

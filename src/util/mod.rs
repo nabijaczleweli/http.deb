@@ -2,37 +2,41 @@
 
 
 mod os;
+mod webdav;
 mod content_encoding;
 
 use base64;
 use std::path::Path;
 use percent_encoding;
+use walkdir::WalkDir;
 use std::borrow::Cow;
 use rfsapi::RawFileData;
-use std::{cmp, f64, fmt};
-use iron::headers::UserAgent;
+use std::time::SystemTime;
+use std::{cmp, f64, fmt, str};
 use std::collections::HashMap;
 use time::{self, Duration, Tm};
 use iron::{mime, Headers, Url};
-use std::io::{BufReader, BufRead};
 use base64::display::Base64Display;
-use std::fs::{self, FileType, File};
-use iron::headers::{HeaderFormat, Header};
 use iron::error::HttpResult as HyperResult;
+use std::fs::{self, FileType, Metadata, File};
+use iron::headers::{HeaderFormat, UserAgent, Header};
 use mime_guess::{guess_mime_type_opt, get_mime_type_str};
+use xml::name::{OwnedName as OwnedXmlName, Name as XmlName};
+use std::io::{ErrorKind as IoErrorKind, BufReader, BufRead, Result as IoResult, Error as IoError};
 
 pub use self::os::*;
+pub use self::webdav::*;
 pub use self::content_encoding::*;
 
 
 /// The generic HTML page to use as response to errors.
-pub static ERROR_HTML: &'static str = include_str!("../../assets/error.html");
+pub static ERROR_HTML: &str = include_str!("../../assets/error.html");
 
 /// The HTML page to use as template for a requested directory's listing.
-pub static DIRECTORY_LISTING_HTML: &'static str = include_str!("../../assets/directory_listing.html");
+pub static DIRECTORY_LISTING_HTML: &str = include_str!("../../assets/directory_listing.html");
 
 /// The HTML page to use as template for a requested directory's listing for mobile devices.
-pub static MOBILE_DIRECTORY_LISTING_HTML: &'static str = include_str!("../../assets/directory_listing_mobile.html");
+pub static MOBILE_DIRECTORY_LISTING_HTML: &str = include_str!("../../assets/directory_listing_mobile.html");
 
 lazy_static! {
     /// Collection of data to be injected into generated responses.
@@ -80,10 +84,10 @@ pub static PORT_SCAN_LOWEST: u16 = 8000;
 pub static PORT_SCAN_HIGHEST: u16 = 9999;
 
 /// The app name and version to use with User-Agent or Server response header.
-pub static USER_AGENT: &'static str = concat!("http/", env!("CARGO_PKG_VERSION"));
+pub static USER_AGENT: &str = concat!("http/", env!("CARGO_PKG_VERSION"));
 
 /// Index file extensions to look for if `-i` was not specified.
-pub static INDEX_EXTENSIONS: &'static [&'static str] = &["html", "htm", "shtml"];
+pub static INDEX_EXTENSIONS: &[&str] = &["html", "htm", "shtml"];
 
 
 /// The [WWW-Authenticate header](https://tools.ietf.org/html/rfc7235#section-4.1), without parsing.
@@ -108,6 +112,46 @@ impl HeaderFormat for WwwAuthenticate {
         f.write_str(&self.0)
     }
 }
+
+#[derive(Debug, Copy, Clone, Hash, PartialOrd, Ord, PartialEq, Eq)]
+pub struct CommaList<D: fmt::Display, I: Iterator<Item = D>>(pub I);
+
+impl<D: fmt::Display, I: Iterator<Item = D> + Clone> fmt::Display for CommaList<D, I> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let mut itr = self.0.clone();
+        if let Some(item) = itr.next() {
+            item.fmt(f)?;
+
+            for item in itr {
+                f.write_str(", ")?;
+                item.fmt(f)?;
+            }
+        }
+
+        Ok(())
+    }
+}
+
+
+/// `xml`'s `OwnedName::borrow()` returns a value not a reference, so it cannot be used with the libstd `Borrow` trait
+pub trait BorrowXmlName<'n> {
+    fn borrow_xml_name(&'n self) -> XmlName<'n>;
+}
+
+impl<'n> BorrowXmlName<'n> for XmlName<'n> {
+    #[inline(always)]
+    fn borrow_xml_name(&'n self) -> XmlName<'n> {
+        *self
+    }
+}
+
+impl<'n> BorrowXmlName<'n> for OwnedXmlName {
+    #[inline(always)]
+    fn borrow_xml_name(&'n self) -> XmlName<'n> {
+        self.borrow()
+    }
+}
+
 
 
 /// Uppercase the first character of the supplied string.
@@ -143,7 +187,10 @@ pub fn uppercase_first(s: &str) -> String {
 /// assert!(!file_binary("Cargo.toml"));
 /// ```
 pub fn file_binary<P: AsRef<Path>>(path: P) -> bool {
-    let path = path.as_ref();
+    file_binary_impl(path.as_ref())
+}
+
+fn file_binary_impl(path: &Path) -> bool {
     path.metadata()
         .map(|m| is_device(&m.file_type()) || File::open(path).and_then(|f| BufReader::new(f).read_line(&mut String::new())).is_err())
         .unwrap_or(true)
@@ -203,8 +250,37 @@ pub fn percent_decode(s: &str) -> Option<Cow<str>> {
 }
 
 /// Get the timestamp of the file's last modification as a `time::Tm` in UTC.
-pub fn file_time_modified(f: &Path) -> Tm {
-    match f.metadata().expect("Failed to get file metadata").modified().expect("Failed to get file last modified date").elapsed() {
+pub fn file_time_modified_p(f: &Path) -> Tm {
+    file_time_modified(&f.metadata().expect("Failed to get file metadata"))
+}
+
+/// Get the timestamp of the file's last modification as a `time::Tm` in UTC.
+pub fn file_time_created_p(f: &Path) -> Tm {
+    file_time_created(&f.metadata().expect("Failed to get file metadata"))
+}
+
+/// Get the timestamp of the file's last access as a `time::Tm` in UTC.
+pub fn file_time_accessed_p(f: &Path) -> Tm {
+    file_time_accessed(&f.metadata().expect("Failed to get file metadata"))
+}
+
+/// Get the timestamp of the file's last modification as a `time::Tm` in UTC.
+pub fn file_time_modified(m: &Metadata) -> Tm {
+    file_time_impl(m.modified().expect("Failed to get file last modified date"))
+}
+
+/// Get the timestamp of the file's last modification as a `time::Tm` in UTC.
+pub fn file_time_created(m: &Metadata) -> Tm {
+    file_time_impl(m.created().expect("Failed to get file created date"))
+}
+
+/// Get the timestamp of the file's last access as a `time::Tm` in UTC.
+pub fn file_time_accessed(m: &Metadata) -> Tm {
+    file_time_impl(m.accessed().expect("Failed to get file accessed date"))
+}
+
+fn file_time_impl(time: SystemTime) -> Tm {
+    match time.elapsed() {
         Ok(dur) => time::now_utc() - Duration::from_std(dur).unwrap(),
         Err(ste) => time::now_utc() + Duration::from_std(ste.duration()).unwrap(),
     }
@@ -327,6 +403,13 @@ pub fn client_mobile(hdr: &Headers) -> bool {
     hdr.get::<UserAgent>().map(|s| s.contains("Mobi") || s.contains("mobi")).unwrap_or(false)
 }
 
+/// Check if, given the request headers, the client should be treated as Microsoft software.
+///
+/// Based on https://github.com/miquels/webdav-handler-rs/blob/02433c1acfccd848a7de26889f6857cbad559076/src/handle_props.rs#L529
+pub fn client_microsoft(hdr: &Headers) -> bool {
+    hdr.get::<UserAgent>().map(|s| s.contains("Microsoft") || s.contains("microsoft")).unwrap_or(false)
+}
+
 /// Get the suffix for the icon to use to represent the given file.
 pub fn file_icon_suffix<P: AsRef<Path>>(f: P, is_file: bool) -> &'static str {
     if is_file {
@@ -347,7 +430,11 @@ pub fn file_icon_suffix<P: AsRef<Path>>(f: P, is_file: bool) -> &'static str {
 ///
 /// The specified path must point to a file.
 pub fn get_raw_fs_metadata<P: AsRef<Path>>(f: P) -> RawFileData {
-    let f = f.as_ref();
+    get_raw_fs_metadata_impl(f.as_ref())
+}
+
+fn get_raw_fs_metadata_impl(f: &Path) -> RawFileData {
+    let meta = f.metadata().expect("Failed to get requested file metadata");
     RawFileData {
         mime_type: guess_mime_type_opt(f).unwrap_or_else(|| if file_binary(f) {
             "application/octet-stream".parse().unwrap()
@@ -355,8 +442,63 @@ pub fn get_raw_fs_metadata<P: AsRef<Path>>(f: P) -> RawFileData {
             "text/plain".parse().unwrap()
         }),
         name: f.file_name().unwrap().to_str().expect("Failed to get requested file name").to_string(),
-        last_modified: file_time_modified(f),
-        size: f.metadata().expect("Failed to get requested file metadata").len(),
+        last_modified: file_time_modified(&meta),
+        size: file_length(&meta, &f),
         is_file: true,
     }
+}
+
+/// Recursively copy a directory
+///
+/// Stolen from https://github.com/mdunsmuir/copy_dir/blob/0.1.2/src/lib.rs
+pub fn copy_dir(from: &Path, to: &Path) -> IoResult<Vec<(IoError, String)>> {
+    macro_rules! push_error {
+        ($vec:ident, $path:ident, $expr:expr) => {
+            match $expr {
+                Ok(_) => (),
+                Err(e) => $vec.push((e, $path.to_string_lossy().into_owned())),
+            }
+        };
+    }
+
+    let mut errors = Vec::new();
+
+    fs::create_dir(&to)?;
+
+    // The approach taken by this code (i.e. walkdir) will not gracefully
+    // handle copying a directory into itself, so we're going to simply
+    // disallow it by checking the paths. This is a thornier problem than I
+    // wish it was, and I'd like to find a better solution, but for now I
+    // would prefer to return an error rather than having the copy blow up
+    // in users' faces. Ultimately I think a solution to this will involve
+    // not using walkdir at all, and might come along with better handling
+    // of hard links.
+    if from.canonicalize().and_then(|fc| to.canonicalize().map(|tc| (fc, tc))).map(|(fc, tc)| tc.starts_with(fc))? {
+        fs::remove_dir(&to)?;
+
+        return Err(IoError::new(IoErrorKind::Other, "cannot copy to a path prefixed by the source path"));
+    }
+
+    for entry in WalkDir::new(&from).min_depth(1).into_iter().flatten() {
+        let source_metadata = match entry.metadata() {
+            Ok(md) => md,
+            Err(err) => {
+                errors.push((err.into(), entry.path().to_string_lossy().into_owned()));
+                continue;
+            }
+        };
+
+        let relative_path = entry.path().strip_prefix(&from).expect("strip_prefix failed; this is a probably a bug in copy_dir");
+
+        let target_path = to.join(relative_path);
+
+        if !is_actually_file(&source_metadata.file_type()) {
+            push_error!(errors, relative_path, fs::create_dir(&target_path));
+            push_error!(errors, relative_path, fs::set_permissions(&target_path, source_metadata.permissions()));
+        } else {
+            push_error!(errors, relative_path, fs::copy(entry.path(), &target_path));
+        }
+    }
+
+    Ok(errors)
 }
