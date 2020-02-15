@@ -1087,11 +1087,11 @@ pub fn try_ports<H: Handler + Clone>(hndlr: H, from: u16, up_to: u16, tls_data: 
         let ir = Iron::new(hndlr.clone());
         match if let Some(&((_, ref id), ref pw)) = tls_data.as_ref() {
             ir.https(("0.0.0.0", port),
-                     try!(NativeTlsServer::new(id, pw).map_err(|_| {
-                Error::Io {
+                     try!(NativeTlsServer::new(id, pw).map_err(|err| {
+                Error {
                     desc: "TLS certificate",
                     op: "open",
-                    more: None,
+                    more: err.to_string().into(),
                 }
             })))
         } else {
@@ -1099,21 +1099,22 @@ pub fn try_ports<H: Handler + Clone>(hndlr: H, from: u16, up_to: u16, tls_data: 
         } {
             Ok(server) => return Ok(server),
             Err(error) => {
-                if !error.to_string().contains("port") {
-                    return Err(Error::Io {
+                let error_s = error.to_string();
+                if !error_s.contains("port") && !error_s.contains("in use") {
+                    return Err(Error {
                         desc: "server",
                         op: "start",
-                        more: None,
+                        more: error_s.into(),
                     });
                 }
             }
         }
     }
 
-    Err(Error::Io {
+    Err(Error {
         desc: "server",
         op: "start",
-        more: Some("no free ports".into()),
+        more: "no free ports".into(),
     })
 }
 
@@ -1130,15 +1131,15 @@ pub fn try_ports<H: Handler + Clone>(hndlr: H, from: u16, up_to: u16, tls_data: 
 /// assert_eq!(pass, "");
 /// ```
 pub fn generate_tls_data(temp_dir: &(String, PathBuf)) -> Result<((String, PathBuf), String), Error> {
-    fn err(which: bool, op: &'static str, more: Option<Cow<'static, str>>) -> Error {
-        Error::Io {
+    fn err<M: Into<Cow<'static, str>>>(which: bool, op: &'static str, more: M) -> Error {
+        Error {
             desc: if which {
                 "TLS key generation process"
             } else {
                 "TLS identity generation process"
             },
             op: op,
-            more: more,
+            more: more.into(),
         }
     }
     fn exit_err(which: bool, process: &mut Child, exitc: &ExitStatus) -> Error {
@@ -1151,18 +1152,18 @@ pub fn generate_tls_data(temp_dir: &(String, PathBuf)) -> Result<((String, PathB
             stderr = "<error getting process stderr".to_string();
         }
 
-        err(which,
-            "exit",
-            Some(format!("{};\nstdout: ```\n{}```;\nstderr: ```\n{}```", exitc, stdout, stderr).into()))
+        err(which, "exit", format!("{};\nstdout: ```\n{}```;\nstderr: ```\n{}```", exitc, stdout, stderr))
     }
 
     let tls_dir = temp_dir.1.join("tls");
-    if !tls_dir.exists() && fs::create_dir_all(&tls_dir).is_err() {
-        return Err(Error::Io {
-            desc: "temporary directory",
-            op: "create",
-            more: None,
-        });
+    if !tls_dir.exists() {
+        if let Err(err) = fs::create_dir_all(&tls_dir) {
+            return Err(Error {
+                desc: "temporary directory",
+                op: "create",
+                more: err.to_string().into(),
+            });
+        }
     }
 
     let mut child = try!(Command::new("openssl")
@@ -1172,7 +1173,7 @@ pub fn generate_tls_data(temp_dir: &(String, PathBuf)) -> Result<((String, PathB
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .map_err(|_| err(true, "spawn", None)));
+        .map_err(|error| err(true, "spawn", error.to_string())));
     try!(child.stdin
         .as_mut()
         .unwrap()
@@ -1182,8 +1183,8 @@ pub fn generate_tls_data(temp_dir: &(String, PathBuf)) -> Result<((String, PathB
                            env!("CARGO_PKG_VERSION"),
                            "\nnabijaczleweli@gmail.com\n")
             .as_bytes())
-        .map_err(|_| err(true, "pipe", None)));
-    let es = try!(child.wait().map_err(|_| err(true, "wait", None)));
+        .map_err(|error| err(true, "pipe", error.to_string())));
+    let es = try!(child.wait().map_err(|error| err(true, "wait", error.to_string())));
     if !es.success() {
         return Err(exit_err(true, &mut child, &es));
     }
@@ -1195,8 +1196,8 @@ pub fn generate_tls_data(temp_dir: &(String, PathBuf)) -> Result<((String, PathB
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn()
-        .map_err(|_| err(false, "spawn", None)));
-    let es = try!(child.wait().map_err(|_| err(false, "wait", None)));
+        .map_err(|error| err(false, "spawn", error.to_string())));
+    let es = try!(child.wait().map_err(|error| err(false, "wait", error.to_string())));
     if !es.success() {
         return Err(exit_err(false, &mut child, &es));
     }
