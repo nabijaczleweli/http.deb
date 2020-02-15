@@ -1,6 +1,8 @@
 //! Module containing various utility functions.
 
 
+mod content_encoding;
+
 use base64;
 use std::f64;
 use std::cmp;
@@ -14,43 +16,46 @@ use time::{self, Duration, Tm};
 use std::io::{BufReader, BufRead};
 use mime_guess::get_mime_type_str;
 
+pub use self::content_encoding::*;
+
 
 /// The generic HTML page to use as response to errors.
-pub static ERROR_HTML: &'static str = include_str!("../assets/error.html");
+pub static ERROR_HTML: &'static str = include_str!("../../assets/error.html");
 
 /// The HTML page to use as template for a requested directory's listing.
-pub static DIRECTORY_LISTING_HTML: &'static str = include_str!("../assets/directory_listing.html");
+pub static DIRECTORY_LISTING_HTML: &'static str = include_str!("../../assets/directory_listing.html");
 
 lazy_static! {
+    /// Collection of data to be injected into generated responses.
     pub static ref ASSETS: HashMap<&'static str, Cow<'static, str>> = {
         let mut ass = HashMap::with_capacity(1);
         ass.insert("favicon",
-            Cow::Owned(format!("data:{};base64,{}", get_mime_type_str("ico").unwrap(), base64::encode(include_bytes!("../assets/favicon.ico")))));
+            Cow::Owned(format!("data:{};base64,{}", get_mime_type_str("ico").unwrap(), base64::encode(include_bytes!("../../assets/favicon.ico")))));
         ass.insert("dir_icon",
             Cow::Owned(format!("data:{};base64,{}",
                                get_mime_type_str("gif").unwrap(),
-                               base64::encode(include_bytes!("../assets/icons/directory_icon.gif")))));
+                               base64::encode(include_bytes!("../../assets/icons/directory_icon.gif")))));
         ass.insert("file_icon",
             Cow::Owned(format!("data:{};base64,{}",
                                get_mime_type_str("gif").unwrap(),
-                               base64::encode(include_bytes!("../assets/icons/file_icon.gif")))));
+                               base64::encode(include_bytes!("../../assets/icons/file_icon.gif")))));
         ass.insert("file_binary_icon",
             Cow::Owned(format!("data:{};base64,{}",
                                get_mime_type_str("gif").unwrap(),
-                               base64::encode(include_bytes!("../assets/icons/file_binary_icon.gif")))));
+                               base64::encode(include_bytes!("../../assets/icons/file_binary_icon.gif")))));
         ass.insert("file_image_icon",
             Cow::Owned(format!("data:{};base64,{}",
                                get_mime_type_str("gif").unwrap(),
-                               base64::encode(include_bytes!("../assets/icons/file_image_icon.gif")))));
+                               base64::encode(include_bytes!("../../assets/icons/file_image_icon.gif")))));
         ass.insert("file_text_icon",
             Cow::Owned(format!("data:{};base64,{}",
                                get_mime_type_str("gif").unwrap(),
-                               base64::encode(include_bytes!("../assets/icons/file_text_icon.gif")))));
+                               base64::encode(include_bytes!("../../assets/icons/file_text_icon.gif")))));
         ass.insert("back_arrow_icon",
             Cow::Owned(format!("data:{};base64,{}",
                                get_mime_type_str("gif").unwrap(),
-                               base64::encode(include_bytes!("../assets/icons/back_arrow_icon.gif")))));
-        ass.insert("drag_drop", Cow::Borrowed(include_str!("../assets/drag_drop.js")));
+                               base64::encode(include_bytes!("../../assets/icons/back_arrow_icon.gif")))));
+        ass.insert("drag_drop", Cow::Borrowed(include_str!("../../assets/drag_drop.js")));
         ass
     };
 }
