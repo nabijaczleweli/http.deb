@@ -1,6 +1,7 @@
 use md6;
 use std::iter;
 use time::now;
+use std::borrow::Cow;
 use unicase::UniCase;
 use iron::mime::Mime;
 use std::sync::RwLock;
@@ -12,8 +13,10 @@ use iron::modifiers::Header;
 use std::collections::HashMap;
 use self::super::{Options, Error};
 use mime_guess::guess_mime_type_opt;
-use std::io::{self, Read, Seek, SeekFrom};
+use hyper_native_tls::NativeTlsServer;
+use std::io::{self, SeekFrom, Write, Read, Seek};
 use trivial_colours::{Reset as CReset, Colour as C};
+use std::process::{ExitStatus, Command, Child, Stdio};
 use iron::{headers, status, method, mime, IronResult, Listening, Response, TypeMap, Request, Handler, Iron};
 use self::super::util::{url_path, file_hash, is_symlink, encode_str, encode_file, hash_string, html_response, file_binary, client_mobile, percent_decode,
                         file_icon_suffix, response_encoding, detect_file_as_dir, encoding_extension, file_time_modified, human_readable_size, USER_AGENT,
@@ -78,9 +81,16 @@ impl HttpHandler {
         }
     }
 
-    fn temp_subdir(td: &Option<(String, PathBuf)>, flag: bool, name: &str) -> Option<(String, PathBuf)> {
-        if flag && td.is_some() {
-            let &(ref temp_name, ref temp_dir) = td.as_ref().unwrap();
+    pub fn clean_temp_dirs(temp_dir: &(String, PathBuf)) {
+        for (temp_name, temp_dir) in ["writes", "encoded", "tls"].into_iter().flat_map(|tn| HttpHandler::temp_subdir(temp_dir, true, tn)) {
+            if temp_dir.exists() && fs::remove_dir_all(&temp_dir).is_ok() {
+                log!("Deleted temp dir {magenta}{}{reset}", temp_name);
+            }
+        }
+    }
+
+    fn temp_subdir(&(ref temp_name, ref temp_dir): &(String, PathBuf), flag: bool, name: &str) -> Option<(String, PathBuf)> {
+        if flag {
             Some((format!("{}{}{}",
                           temp_name,
                           if temp_name.ends_with("/") || temp_name.ends_with(r"\") {
@@ -481,7 +491,7 @@ impl HttpHandler {
         };
         let list_s = req_p.read_dir()
             .expect("Failed to read requested directory")
-            .map(|p| p.expect("Failed to iterate over trequested directory"))
+            .map(|p| p.expect("Failed to iterate over requested directory"))
             .filter(|f| self.follow_symlinks || !is_symlink(f.path()))
             .sorted_by(|lhs, rhs| {
                 (lhs.file_type().expect("Failed to get file type").is_file(), lhs.file_name().to_str().expect("Failed to get file name").to_lowercase())
@@ -493,13 +503,14 @@ impl HttpHandler {
                 let fname = f.file_name().into_string().expect("Failed to get file name");
                 let path = f.path();
 
-                format!("{}<a href=\"{path}{fname}\" class=\"list entry top\"><span class=\"{}{}_icon\" id=\"{}\">{fname}{}</span></a> \
+                format!("{}<a href=\"{path}{fname}\" class=\"list entry top\"><span class=\"{}{}_icon\" id=\"{}\">{}{}</span></a> \
                          <a href=\"{path}{fname}\" class=\"list entry bottom\"><span class=\"marker\">@</span><span class=\"datetime\">{} UTC</span> \
                          {}{}{}</a>\n",
                         cur,
                         if is_file { "file" } else { "dir" },
                         file_icon_suffix(&path, is_file),
                         path.file_name().map(|p| p.to_str().expect("Filename not UTF-8").replace('.', "_")).as_ref().unwrap_or(&fname),
+                        fname,
                         if is_file { "" } else { "/" },
                         file_time_modified(&path).strftime("%F %T").unwrap(),
                         if is_file { "<span class=\"size\">" } else { "" },
@@ -509,8 +520,8 @@ impl HttpHandler {
                             String::new()
                         },
                         if is_file { "</span>" } else { "" },
-                        path = format!("/{}", relpath).replace("//", "/"),
-                        fname = fname)
+                        path = format!("/{}", relpath).replace("//", "/").replace('%', "%25").replace('#', "%23"),
+                        fname = fname.replace('%', "%25").replace('#', "%23"))
             });
 
         self.handle_generated_response_encoding(req,
@@ -559,7 +570,7 @@ impl HttpHandler {
         };
         let list_s = req_p.read_dir()
             .expect("Failed to read requested directory")
-            .map(|p| p.expect("Failed to iterate over trequested directory"))
+            .map(|p| p.expect("Failed to iterate over requested directory"))
             .filter(|f| self.follow_symlinks || !is_symlink(f.path()))
             .sorted_by(|lhs, rhs| {
                 (lhs.file_type().expect("Failed to get file type").is_file(), lhs.file_name().to_str().expect("Failed to get file name").to_lowercase())
@@ -571,15 +582,15 @@ impl HttpHandler {
                 let fname = f.file_name().into_string().expect("Failed to get file name");
                 let path = f.path();
                 let len = f.metadata().expect("Failed to get file metadata").len();
-                let abspath = format!("/{}", relpath).replace("//", "/");
 
                 format!("{}<tr><td><a href=\"{path}{fname}\" id=\"{}\" class=\"{}{}_icon\"></a></td> \
-                           <td><a href=\"{path}{fname}\">{fname}{}</a></td> <td><a href=\"{path}{fname}\" class=\"datetime\">{}</a></td> \
+                           <td><a href=\"{path}{fname}\">{}{}</a></td> <td><a href=\"{path}{fname}\" class=\"datetime\">{}</a></td> \
                            <td><a href=\"{path}{fname}\">{}{}{}{}{}</a></td></tr>\n",
                         cur,
                         path.file_name().map(|p| p.to_str().expect("Filename not UTF-8").replace('.', "_")).as_ref().unwrap_or(&fname),
                         if is_file { "file" } else { "dir" },
                         file_icon_suffix(&path, is_file),
+                        fname,
                         if is_file { "" } else { "/" },
                         file_time_modified(&path).strftime("%F %T").unwrap(),
                         if is_file { "<abbr title=\"" } else { "&nbsp;" },
@@ -595,8 +606,8 @@ impl HttpHandler {
                             String::new()
                         },
                         if is_file { "</abbr>" } else { "" },
-                        path = abspath,
-                        fname = fname)
+                        path = format!("/{}", relpath).replace("//", "/").replace('%', "%25").replace('#', "%23"),
+                        fname = fname.replace('%', "%25").replace('#', "%23"))
             });
 
         self.handle_generated_response_encoding(req,
@@ -716,27 +727,33 @@ impl HttpHandler {
             return self.handle_forbidden_method(req, "-w", "write requests");
         }
 
-        let (req_p, symlink, url_err) = self.parse_requested_path(req);
+        let (req_p, symlink, url_err) = self.parse_requested_path_custom_symlink(req, false);
 
         if url_err {
             self.handle_invalid_url(req, "<p>Percent-encoding decoded to invalid UTF-8.</p>")
         } else if !req_p.exists() || (symlink && !self.follow_symlinks) {
             self.handle_nonexistant(req, req_p)
         } else {
-            self.handle_delete_path(req, req_p)
+            self.handle_delete_path(req, req_p, symlink)
         }
     }
 
-    fn handle_delete_path(&self, req: &mut Request, req_p: PathBuf) -> IronResult<Response> {
+    fn handle_delete_path(&self, req: &mut Request, req_p: PathBuf, symlink: bool) -> IronResult<Response> {
         log!("{green}{}{reset} deleted {blue}{} {magenta}{}{reset}",
              req.remote_addr,
-             if req_p.is_file() { "file" } else { "directory" },
+             if req_p.is_file() {
+                 "file"
+             } else if symlink {
+                 "symlink"
+             } else {
+                 "directory"
+             },
              req_p.display());
 
         if req_p.is_file() {
             fs::remove_file(req_p).expect("Failed to remove requested file");
         } else {
-            fs::remove_dir_all(req_p).expect("Failed to remove requested directory");
+            fs::remove_dir_all(req_p).expect(if symlink {"Failed to remove requested symlink"} else {"Failed to remove requested directory"});
         }
 
         Ok(Response::with((status::NoContent, Header(headers::Server(USER_AGENT.to_string())))))
@@ -830,6 +847,10 @@ impl HttpHandler {
     }
 
     fn parse_requested_path(&self, req: &Request) -> (PathBuf, bool, bool) {
+        self.parse_requested_path_custom_symlink(req, true)
+    }
+
+    fn parse_requested_path_custom_symlink(&self, req: &Request, follow_symlinks: bool) -> (PathBuf, bool, bool) {
         req.url.path().into_iter().filter(|p| !p.is_empty()).fold((self.hosted_directory.1.clone(), false, false), |(mut cur, mut sk, mut err), pp| {
             if let Some(pp) = percent_decode(pp) {
                 cur.push(&*pp);
@@ -838,8 +859,12 @@ impl HttpHandler {
             }
 
             while let Ok(newlink) = cur.read_link() {
-                cur = newlink;
                 sk = true;
+                if follow_symlinks {
+                    cur = newlink;
+                } else {
+                    break;
+                }
             }
 
             (cur, sk, err)
@@ -882,11 +907,23 @@ impl Clone for HttpHandler {
 /// # extern crate iron;
 /// # use https::ops::try_ports;
 /// # use iron::{status, Response};
-/// let server = try_ports(|req| Ok(Response::with((status::Ok, "Abolish the burgeoisie!"))), 8000, 8100).unwrap();
+/// let server = try_ports(|req| Ok(Response::with((status::Ok, "Abolish the burgeoisie!"))), 8000, 8100, None).unwrap();
 /// ```
-pub fn try_ports<H: Handler + Clone>(hndlr: H, from: u16, up_to: u16) -> Result<Listening, Error> {
+pub fn try_ports<H: Handler + Clone>(hndlr: H, from: u16, up_to: u16, tls_data: &Option<((String, PathBuf), String)>) -> Result<Listening, Error> {
     for port in from..up_to + 1 {
-        match Iron::new(hndlr.clone()).http(("0.0.0.0", port)) {
+        let ir = Iron::new(hndlr.clone());
+        match if let Some(&((_, ref id), ref pw)) = tls_data.as_ref() {
+            ir.https(("0.0.0.0", port),
+                     try!(NativeTlsServer::new(id, pw).map_err(|_| {
+                Error::Io {
+                    desc: "TLS certificate",
+                    op: "open",
+                    more: None,
+                }
+            })))
+        } else {
+            ir.http(("0.0.0.0", port))
+        } {
             Ok(server) => return Ok(server),
             Err(error) => {
                 if !error.to_string().contains("port") {
@@ -903,6 +940,93 @@ pub fn try_ports<H: Handler + Clone>(hndlr: H, from: u16, up_to: u16) -> Result<
     Err(Error::Io {
         desc: "server",
         op: "start",
-        more: Some("no free ports"),
+        more: Some("no free ports".into()),
     })
+}
+
+/// Generate a passwordless self-signed certificate in the `"tls"` subdirectory of the specified directory
+/// with the filenames `"tls.*"`.
+///
+/// # Examples
+///
+/// ```
+/// # use https::ops::generate_tls_data;
+/// let ((ident_name, ident_file), pass) = generate_tls_data(&(".".to_string(), ".".into())).unwrap();
+/// assert_eq!(ident_name, "./tls/tls.p12");
+/// assert!(ident_file.exists());
+/// assert_eq!(pass, "");
+/// ```
+pub fn generate_tls_data(temp_dir: &(String, PathBuf)) -> Result<((String, PathBuf), String), Error> {
+    fn err(which: bool, op: &'static str, more: Option<Cow<'static, str>>) -> Error {
+        Error::Io {
+            desc: if which {
+                "TLS key generation process"
+            } else {
+                "TLS identity generation process"
+            },
+            op: op,
+            more: more,
+        }
+    }
+    fn exit_err(which: bool, process: &mut Child, exitc: &ExitStatus) -> Error {
+        let mut stdout = String::new();
+        let mut stderr = String::new();
+        if process.stdout.as_mut().unwrap().read_to_string(&mut stdout).is_err() {
+            stdout = "<error getting process stdout".to_string();
+        }
+        if process.stderr.as_mut().unwrap().read_to_string(&mut stderr).is_err() {
+            stderr = "<error getting process stderr".to_string();
+        }
+
+        err(which,
+            "exit",
+            Some(format!("{};\nstdout: ```\n{}```;\nstderr: ```\n{}```", exitc, stdout, stderr).into()))
+    }
+
+    let tls_dir = temp_dir.1.join("tls");
+    if !tls_dir.exists() && fs::create_dir_all(&tls_dir).is_err() {
+        return Err(Error::Io {
+            desc: "temporary directory",
+            op: "create",
+            more: None,
+        });
+    }
+
+    let mut child = try!(Command::new("openssl")
+        .args(&["req", "-x509", "-newkey", "rsa:4096", "-nodes", "-keyout", "tls.key", "-out", "tls.crt", "-days", "3650", "-utf8"])
+        .current_dir(&tls_dir)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|_| err(true, "spawn", None)));
+    try!(child.stdin
+        .as_mut()
+        .unwrap()
+        .write_all(concat!("PL\nhttp\n",
+                           env!("CARGO_PKG_VERSION"),
+                           "\nthecoshman&nabijaczleweli\nнаб\nhttp/",
+                           env!("CARGO_PKG_VERSION"),
+                           "\nnabijaczleweli@gmail.com\n")
+            .as_bytes())
+        .map_err(|_| err(true, "pipe", None)));
+    let es = try!(child.wait().map_err(|_| err(true, "wait", None)));
+    if !es.success() {
+        return Err(exit_err(true, &mut child, &es));
+    }
+
+    let mut child = try!(Command::new("openssl")
+        .args(&["pkcs12", "-export", "-out", "tls.p12", "-inkey", "tls.key", "-in", "tls.crt", "-passin", "pass:", "-passout", "pass:"])
+        .current_dir(&tls_dir)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|_| err(false, "spawn", None)));
+    let es = try!(child.wait().map_err(|_| err(false, "wait", None)));
+    if !es.success() {
+        return Err(exit_err(false, &mut child, &es));
+    }
+
+    Ok(((format!("{}/tls/tls.p12", temp_dir.0), tls_dir.join("tls.p12")), String::new()))
 }

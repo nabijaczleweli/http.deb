@@ -40,6 +40,22 @@ pass parameters like what port to use.
 
     Default: $TEMP.
 
+  --ssl [TLS_IDENTITY_FILE]
+
+    TLS identity file to use to encrypt as.
+
+    The password is taken from the HTTP_SSL_PASS environment variable, or empty
+    if that variable doesn't exist.
+
+    Default: None.
+
+  --gen-ssl
+
+    Generate a passwordless, single-use TLS self-signed certificate
+    and use it for this session.
+
+    Exclusive with --ssl. Default: false.
+
   -s --no-follow-symlinks
 
     Don't follow symlinks when requesting file access.
@@ -81,7 +97,7 @@ pass parameters like what port to use.
 
     Example output:
       p:\Rust\http> http
-      Hosting "." on port 8000...
+      Hosting "." on port 8000 without TLS...
       Ctrl-C to stop.
 
       127.0.0.1:47880 was served directory listing for \\?\P:\Rust\http
@@ -141,11 +157,27 @@ pass parameters like what port to use.
     As in the first example, but host on port 6969.
 
     Assuming the port is free, example output change:
-      Hosting "." on port 6969...
+      Hosting "." on port 6969 without TLS...
 
     If the port is taken, example output change:
       Starting server failed: port taken.
       <EOF>
+
+  `HTTP_SSL_PASS=pwd http --ssl cert/http8k.p12`
+
+    As in the first example, but encrypt with the identity file cert/http8k.p12
+    unlocked with password "pwd".
+
+    Assuming password is correct, example output change:
+      Hosting "." on port 8000 TLS certificate from "cert/http8k.p12"...
+
+  `http --gen-ssl`
+
+    As in the first example, but encrypt with a newly created self-signed
+    identity file.
+
+    Example output change:
+      Hosting "." on port 8000 TLS certificate from "$TEMP/http-P-Rust-http/tls/tls.p12"...
 
 ## AUTHOR
 

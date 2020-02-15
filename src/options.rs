@@ -12,8 +12,8 @@
 
 
 use clap::{AppSettings, Arg, App};
+use std::env::{self, temp_dir};
 use std::path::PathBuf;
-use std::env::temp_dir;
 use std::str::FromStr;
 use std::fs;
 
@@ -27,14 +27,19 @@ pub struct Options {
     pub port: Option<u16>,
     /// Whether to allow symlinks to be requested. Default: true
     pub follow_symlinks: bool,
-    /// The temp directory to write to before copying to hosted directory. Default: `None`
-    pub temp_directory: Option<(String, PathBuf)>,
+    /// The temp directory to write to before copying to hosted directory and to store encoded FS responses.
+    /// Default: `"$TEMP/http-[FULL_PATH_TO_HOSTED_DIR]"`
+    pub temp_directory: (String, PathBuf),
     /// Whether to check for index files in served directories before serving a listing. Default: true
     pub check_indices: bool,
     /// Whether to allow write operations. Default: false
     pub allow_writes: bool,
     /// Whether to encode filesystem files. Default: true
     pub encode_fs: bool,
+    /// Data for HTTPS, identity file and password. Default: `None`
+    pub tls_data: Option<((String, PathBuf), String)>,
+    /// Whether to generate a one-off certificate. Default: false
+    pub generate_tls: bool,
 }
 
 impl Options {
@@ -54,17 +59,18 @@ impl Options {
             .arg(Arg::from_usage("-w --allow-write 'Allow for write operations. Default: false'"))
             .arg(Arg::from_usage("-i --no-indices 'Always generate dir listings even if index files are available. Default: false'"))
             .arg(Arg::from_usage("-e --no-encode 'Do not encode filesystem files. Default: false'"))
+            .arg(Arg::from_usage("--ssl [TLS_IDENTITY] 'Data for HTTPS, identity file. Password in HTTP_SSL_PASS env var, otherwise empty'")
+                .validator(Options::identity_validator))
+            .arg(Arg::from_usage("--gen-ssl 'Generate a one-off TLS certificate'").conflicts_with("ssl"))
             .get_matches();
 
-        let w = matches.is_present("allow-write");
-        let e = !matches.is_present("no-encode");
         let dir = matches.value_of("DIR").unwrap_or(".");
         let dir_pb = fs::canonicalize(dir).unwrap();
         Options {
             hosted_directory: (dir.to_string(), dir_pb.clone()),
             port: matches.value_of("port").map(u16::from_str).map(Result::unwrap),
             follow_symlinks: !matches.is_present("no-follow-symlinks"),
-            temp_directory: if w || e {
+            temp_directory: {
                 let (temp_s, temp_pb) = if let Some(tmpdir) = matches.value_of("temp-dir") {
                     (tmpdir.to_string(), fs::canonicalize(tmpdir).unwrap())
                 } else {
@@ -73,21 +79,21 @@ impl Options {
                 let suffix = dir_pb.into_os_string().to_str().unwrap().replace(r"\\?\", "").replace(':', "").replace('\\', "/").replace('/', "-");
                 let suffix = format!("http{}{}", if suffix.starts_with('-') { "" } else { "-" }, suffix);
 
-                Some((format!("{}{}{}",
-                              temp_s,
-                              if temp_s.ends_with("/") || temp_s.ends_with(r"\") {
-                                  ""
-                              } else {
-                                  "/"
-                              },
-                              suffix),
-                      temp_pb.join(suffix)))
-            } else {
-                None
+                (format!("{}{}{}",
+                         temp_s,
+                         if temp_s.ends_with("/") || temp_s.ends_with(r"\") {
+                             ""
+                         } else {
+                             "/"
+                         },
+                         suffix),
+                 temp_pb.join(suffix))
             },
             check_indices: !matches.is_present("no-indices"),
-            allow_writes: w,
-            encode_fs: e,
+            allow_writes: matches.is_present("allow-write"),
+            encode_fs: !matches.is_present("no-encode"),
+            tls_data: matches.value_of("ssl").map(|id| ((id.to_string(), fs::canonicalize(id).unwrap()), env::var("HTTP_SSL_PASS").unwrap_or(String::new()))),
+            generate_tls: matches.is_present("gen-ssl"),
         }
     }
 
@@ -96,6 +102,14 @@ impl Options {
             Ok(())
         } else {
             Err(format!("{} \"{}\" not actualy a directory", prefix, s))
+        })
+    }
+
+    fn identity_validator(s: String) -> Result<(), String> {
+        fs::canonicalize(&s).map_err(|_| format!("TLS identity file \"{}\" not found", s)).and_then(|f| if f.is_file() {
+            Ok(())
+        } else {
+            Err(format!("TLS identity file \"{}\" not actualy a file", s))
         })
     }
 
