@@ -28,7 +28,7 @@ pub static DIRECTORY_LISTING_HTML: &'static str = include_str!("../../assets/dir
 lazy_static! {
     /// Collection of data to be injected into generated responses.
     pub static ref ASSETS: HashMap<&'static str, Cow<'static, str>> = {
-        let mut ass = HashMap::with_capacity(1);
+        let mut ass = HashMap::with_capacity(8);
         ass.insert("favicon",
             Cow::Owned(format!("data:{};base64,{}", get_mime_type_str("ico").unwrap(), base64::encode(include_bytes!("../../assets/favicon.ico")))));
         ass.insert("dir_icon",
@@ -203,11 +203,15 @@ pub fn is_symlink<P: AsRef<Path>>(p: P) -> bool {
 ///
 /// Stolen, adapted and inlined from [fielsize.js](http://filesizejs.com).
 pub fn human_readable_size(s: u64) -> String {
+    lazy_static! {
+        static ref LN_KIB: f64 = 1024f64.log(f64::consts::E);
+    }
+
     if s == 0 {
         "0 B".to_string()
     } else {
         let num = s as f64;
-        let exp = cmp::min(cmp::max((num.log(f64::consts::E) / 1024f64.log(f64::consts::E)) as i32, 0), 8);
+        let exp = cmp::min(cmp::max((num.log(f64::consts::E) / *LN_KIB) as i32, 0), 8);
 
         let val = num / 2f64.powi(exp * 10);
 
