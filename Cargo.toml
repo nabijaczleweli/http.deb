@@ -44,6 +44,10 @@ md6 = "2.0"
 version = "0.3"
 default-features = false
 
+[dependencies.cidr]
+version = "0.1"
+default-features = false
+
 [dependencies.iron]
 version = "0.6"
 features = ["hyper-native-tls"]

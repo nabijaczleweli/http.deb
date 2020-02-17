@@ -28,7 +28,7 @@
         padding-right: 5pt;
       }
 
-      td:nth-child(3) a, td:nth-child(4) a {
+      td:nth-child(3) a, td:nth-child(4) a, td:nth-child(5) a {
         color: inherit;
       }
 
@@ -36,9 +36,21 @@
         text-align: right;
       }
 
+      td:nth-child(5) {
+        padding-left: 5pt;
+      }
+
+      tr:nth-child(n+4) td:nth-child(5) a {
+        display: inline-block;
+      }
+
       td > a {
         display: block;
         text-decoration: none;
+      }
+
+      td > input {
+        height: 1em;
       }
 
       tr:hover {
@@ -76,14 +88,39 @@
       .back_arrow_icon:before {
         content: url('{back_arrow_icon}');
       }
+
+      .new_dir_icon:before {
+        content: url('{new_dir_icon}');
+      }
+
+      .delete_file_icon:before {
+        content: url('{delete_file_icon}');
+      }
+
+      .rename_icon:before {
+        content: url('{rename_icon}');
+      }
+
+      .confirm_icon:before {
+        content: url('{confirm_icon}');
+      }
+
+      .delete_file_icon, .rename_icon, .confirm_icon {
+        font-size: 0;
+      }
+
+      .has-log {
+        font-size: inherit;
+      }
     </style>
   </head>
   <body>
     <div>
       <p class="pre-list">The requested directory {0} contains the following files:</p>
       <table>
-        <tr><th></th> <th>Name</th> <th>Last modified (UTC)</th> <th>Size</th></tr>
+        <tr><th></th> <th>Name</th> <th>Last modified (UTC)</th> <th>Size</th> {5}</tr>
         {2}
+        {6}
         {3}
       </table>
     </div>
