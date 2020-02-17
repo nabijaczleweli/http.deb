@@ -11,12 +11,13 @@ use percent_encoding;
 use walkdir::WalkDir;
 use std::borrow::Cow;
 use rfsapi::RawFileData;
+use std::{cmp, f64, str};
 use std::time::SystemTime;
-use std::{cmp, f64, fmt, str};
 use std::collections::HashMap;
 use time::{self, Duration, Tm};
 use iron::{mime, Headers, Url};
 use base64::display::Base64Display;
+use std::fmt::{self, Write as FmtWrite};
 use iron::error::HttpResult as HyperResult;
 use std::fs::{self, FileType, Metadata, File};
 use iron::headers::{HeaderFormat, UserAgent, Header};
@@ -49,28 +50,47 @@ lazy_static! {
         ass.insert("dir_icon",
             Cow::Owned(format!("data:{};base64,{}",
                                get_mime_type_str("gif").unwrap(),
-                               Base64Display::with_config(&include_bytes!("../../assets/icons/directory_icon.gif")[..], base64::STANDARD))));
+                               Base64Display::with_config(&include_bytes!("../../assets/icons/directory.gif")[..], base64::STANDARD))));
         ass.insert("file_icon",
             Cow::Owned(format!("data:{};base64,{}",
                                get_mime_type_str("gif").unwrap(),
-                               Base64Display::with_config(&include_bytes!("../../assets/icons/file_icon.gif")[..], base64::STANDARD))));
+                               Base64Display::with_config(&include_bytes!("../../assets/icons/file.gif")[..], base64::STANDARD))));
         ass.insert("file_binary_icon",
             Cow::Owned(format!("data:{};base64,{}",
                                get_mime_type_str("gif").unwrap(),
-                               Base64Display::with_config(&include_bytes!("../../assets/icons/file_binary_icon.gif")[..], base64::STANDARD))));
+                               Base64Display::with_config(&include_bytes!("../../assets/icons/file_binary.gif")[..], base64::STANDARD))));
         ass.insert("file_image_icon",
             Cow::Owned(format!("data:{};base64,{}",
                                get_mime_type_str("gif").unwrap(),
-                               Base64Display::with_config(&include_bytes!("../../assets/icons/file_image_icon.gif")[..], base64::STANDARD))));
+                               Base64Display::with_config(&include_bytes!("../../assets/icons/file_image.gif")[..], base64::STANDARD))));
         ass.insert("file_text_icon",
             Cow::Owned(format!("data:{};base64,{}",
                                get_mime_type_str("gif").unwrap(),
-                               Base64Display::with_config(&include_bytes!("../../assets/icons/file_text_icon.gif")[..], base64::STANDARD))));
+                               Base64Display::with_config(&include_bytes!("../../assets/icons/file_text.gif")[..], base64::STANDARD))));
         ass.insert("back_arrow_icon",
             Cow::Owned(format!("data:{};base64,{}",
                                get_mime_type_str("gif").unwrap(),
-                               Base64Display::with_config(&include_bytes!("../../assets/icons/back_arrow_icon.gif")[..], base64::STANDARD))));
+                               Base64Display::with_config(&include_bytes!("../../assets/icons/back_arrow.gif")[..], base64::STANDARD))));
+        ass.insert("new_dir_icon",
+            Cow::Owned(format!("data:{};base64,{}",
+                               get_mime_type_str("gif").unwrap(),
+                               Base64Display::with_config(&include_bytes!("../../assets/icons/new_directory.gif")[..], base64::STANDARD))));
+        ass.insert("delete_file_icon",
+            Cow::Owned(format!("data:{};base64,{}",
+                               get_mime_type_str("png").unwrap(),
+                               Base64Display::with_config(&include_bytes!("../../assets/icons/delete_file.png")[..], base64::STANDARD))));
+        ass.insert("rename_icon",
+            Cow::Owned(format!("data:{};base64,{}",
+                               get_mime_type_str("png").unwrap(),
+                               Base64Display::with_config(&include_bytes!("../../assets/icons/rename.png")[..], base64::STANDARD))));
+        ass.insert("confirm_icon",
+            Cow::Owned(format!("data:{};base64,{}",
+                               get_mime_type_str("png").unwrap(),
+                               Base64Display::with_config(&include_bytes!("../../assets/icons/confirm.png")[..], base64::STANDARD))));
         ass.insert("date", Cow::Borrowed(include_str!("../../assets/date.js")));
+        ass.insert("manage", Cow::Borrowed(include_str!("../../assets/manage.js")));
+        ass.insert("manage_mobile", Cow::Borrowed(include_str!("../../assets/manage_mobile.js")));
+        ass.insert("manage_desktop", Cow::Borrowed(include_str!("../../assets/manage_desktop.js")));
         ass.insert("upload", Cow::Borrowed(include_str!("../../assets/upload.js")));
         ass.insert("adjust_tz", Cow::Borrowed(include_str!("../../assets/adjust_tz.js")));
         ass
@@ -132,6 +152,18 @@ impl<D: fmt::Display, I: Iterator<Item = D> + Clone> fmt::Display for CommaList<
     }
 }
 
+#[derive(Debug, Copy, Clone, Hash, PartialOrd, Ord, PartialEq, Eq)]
+pub struct DisplayThree<Df: fmt::Display, Ds: fmt::Display, Dt: fmt::Display>(pub Df, pub Ds, pub Dt);
+
+impl<Df: fmt::Display, Ds: fmt::Display, Dt: fmt::Display> fmt::Display for DisplayThree<Df, Ds, Dt> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        self.0.fmt(f)?;
+        self.1.fmt(f)?;
+        self.2.fmt(f)?;
+        Ok(())
+    }
+}
+
 
 /// `xml`'s `OwnedName::borrow()` returns a value not a reference, so it cannot be used with the libstd `Borrow` trait
 pub trait BorrowXmlName<'n> {
@@ -149,6 +181,18 @@ impl<'n> BorrowXmlName<'n> for OwnedXmlName {
     #[inline(always)]
     fn borrow_xml_name(&'n self) -> XmlName<'n> {
         self.borrow()
+    }
+}
+
+#[derive(Debug, Copy, Clone, Hash, PartialOrd, Ord, PartialEq, Eq)]
+pub struct Spaces(pub usize);
+
+impl fmt::Display for Spaces {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        for _ in 0..self.0 {
+            f.write_char(' ')?;
+        }
+        Ok(())
     }
 }
 
