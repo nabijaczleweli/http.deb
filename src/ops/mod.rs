@@ -15,10 +15,10 @@ use std::default::Default;
 use rand::{Rng, thread_rng};
 use iron::modifiers::Header;
 use iron::url::Url as GenericUrl;
-use self::super::{Options, Error};
 use mime_guess::guess_mime_type_opt;
 use hyper_native_tls::NativeTlsServer;
 use std::collections::{BTreeMap, HashMap};
+use self::super::{LogLevel, Options, Error};
 use std::io::{self, SeekFrom, Write, Read, Seek};
 use std::process::{ExitStatus, Command, Child, Stdio};
 use rfsapi::{RawFsApiHeader, FilesetData, RawFileData};
@@ -1207,10 +1207,11 @@ impl HttpHandler {
     }
 
     fn parse_requested_path_custom_symlink(&self, req_url: &GenericUrl, follow_symlinks: bool) -> (PathBuf, bool, bool) {
-        req_url.path_segments()
+        let (mut cur, sk, err, abs) = req_url.path_segments()
             .unwrap()
             .filter(|p| !p.is_empty())
-            .fold((self.hosted_directory.1.clone(), false, false), |(mut cur, mut sk, mut err), pp| {
+            .fold((self.hosted_directory.1.clone(), false, false, true),
+                  |(mut cur, mut sk, mut err, mut abs), pp| {
                 if let Some(pp) = percent_decode(pp) {
                     cur.push(&*pp);
                 } else {
@@ -1222,6 +1223,7 @@ impl HttpHandler {
                         if newlink.is_absolute() {
                             cur = newlink;
                         } else {
+                            abs = false;
                             cur.pop();
                             cur.push(newlink);
                         }
@@ -1229,8 +1231,16 @@ impl HttpHandler {
                         break;
                     }
                 }
-                (cur, sk, err)
-            })
+                (cur, sk, err, abs)
+            });
+
+        if !abs {
+            if let Ok(full) = cur.canonicalize() {
+                cur = full;
+            }
+        }
+
+        (cur, sk, err)
     }
 
     fn create_temp_dir(&self, td: &Option<(String, PathBuf)>) {
@@ -1265,30 +1275,6 @@ impl Clone for HttpHandler {
             proxies: self.proxies.clone(),
             cache_gen: Default::default(),
             cache_fs: Default::default(),
-        }
-    }
-}
-
-
-#[derive(Debug, Copy, Clone, Hash, PartialEq, Eq, PartialOrd, Ord)]
-pub enum LogLevel {
-    /// Write everything
-    All,
-    /// No serving messages
-    NoServeStatus,
-    /// No startup messages, but yes auth data
-    NoStartup,
-    /// No auth data
-    NoAuth,
-}
-
-impl From<u64> for LogLevel {
-    fn from(raw: u64) -> LogLevel {
-        match raw {
-            0 => LogLevel::All,
-            1 => LogLevel::NoServeStatus,
-            2 => LogLevel::NoStartup,
-            _ => LogLevel::NoAuth,
         }
     }
 }
