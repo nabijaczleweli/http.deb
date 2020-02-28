@@ -1,3 +1,13 @@
+http (1.8.0-3) stable; urgency=medium
+
+  [Backport from sid @ 1.8.0+ng4_standalone-options-2]
+  * Fix Architecture from linux-any to any
+  * Fix most evil-mode lintian warnings
+  * Fix licence spec of date.js
+  * Add unminified date.js
+
+ -- nabijaczleweli <nabijaczleweli@gmail.com>  Fri, 28 Feb 2020 03:09:53 +0100
+
 http (1.8.0-2) stable; urgency=medium
 
   [Backport from sid @ 1.8.0+ng4_standalone-options-1]
