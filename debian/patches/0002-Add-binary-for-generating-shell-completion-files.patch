@@ -4,13 +4,13 @@ Subject: Add binary for generating shell completion files
 
 ---
  Cargo.toml                    |  6 ++++++
- src/http-build-completions.rs | 21 +++++++++++++++++++++
+ src/http-build-completions.rs | 22 ++++++++++++++++++++++
  src/options.rs                | 10 +++++++---
- 3 files changed, 34 insertions(+), 3 deletions(-)
+ 3 files changed, 35 insertions(+), 3 deletions(-)
  create mode 100755 src/http-build-completions.rs
 
 diff --git a/Cargo.toml b/Cargo.toml
-index d79685b..3699121 100644
+index 74cffac..b43fff3 100644
 --- a/Cargo.toml
 +++ b/Cargo.toml
 @@ -75,6 +75,12 @@ path = "src/main.rs"
@@ -28,7 +28,7 @@ index d79685b..3699121 100644
  name = "http"
 diff --git a/src/http-build-completions.rs b/src/http-build-completions.rs
 new file mode 100755
-index 0000000..0f83c38
+index 0000000..f1be2ad
 --- /dev/null
 +++ b/src/http-build-completions.rs
 @@ -0,0 +1,22 @@
@@ -55,7 +55,7 @@ index 0000000..0f83c38
 +    }
 +}
 diff --git a/src/options.rs b/src/options.rs
-index 9379d5b..e14ab59 100644
+index b5702a7..0e79e7c 100644
 --- a/src/options.rs
 +++ b/src/options.rs
 @@ -101,9 +101,8 @@ pub struct Options {

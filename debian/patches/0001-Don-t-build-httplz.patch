@@ -9,7 +9,7 @@ and we hardlink httplz to http during the build anyway
  1 file changed, 6 deletions(-)
 
 diff --git a/Cargo.toml b/Cargo.toml
-index c2478f5..d79685b 100644
+index 03151c3..74cffac 100644
 --- a/Cargo.toml
 +++ b/Cargo.toml
 @@ -75,12 +75,6 @@ path = "src/main.rs"
