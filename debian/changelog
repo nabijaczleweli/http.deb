@@ -74,6 +74,30 @@ http (1.8.0~ng1.webui-manager-1) unstable; urgency=medium
 
  -- nabijaczleweli <nabijaczleweli@gmail.com>  Sat, 15 Feb 2020 17:38:20 +0100
 
+http (1.8.0-3) stable; urgency=medium
+
+  [Backport from sid @ 1.8.0+ng4_standalone-options-2]
+  * Fix Architecture from linux-any to any
+  * Fix most evil-mode lintian warnings
+  * Fix licence spec of date.js
+  * Add unminified date.js
+
+ -- nabijaczleweli <nabijaczleweli@gmail.com>  Fri, 28 Feb 2020 03:09:53 +0100
+
+http (1.8.0-2) stable; urgency=medium
+
+  [Backport from sid @ 1.8.0+ng4_standalone-options-1]
+  * Add upstream changelog. Fix versioning scheme
+  * Fix lintian
+  * Use debhelper overrides correctly. Fix source package Section
+  * Avoid building the binary twice
+  * Patch in simple binary for extracting shell completion files
+  * Install completions for bash, zsh, and fish
+  [Patch-in from upstream]
+  * Patch-pick "Move LogLevel to mod options" from upstream
+
+ -- nabijaczleweli <nabijaczleweli@gmail.com>  Sun, 23 Feb 2020 18:36:59 +0100
+
 http (1.8.0-1) unstable; urgency=medium
 
   * Initial release, upstream version 1.8.0
