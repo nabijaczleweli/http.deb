@@ -1,3 +1,14 @@
+http (1.9.0-1) unstable; urgency=medium
+
+  * Fix d/watch
+  * New upstream version 1.9.0
+  * Rebase patches
+  * Update upstream changelog
+  * Add proper clean target. Don't generate html manpage
+  * Fix build description to actually build in a clean sid chroot
+
+ -- nabijaczleweli <nabijaczleweli@gmail.com>  Thu, 05 Mar 2020 15:50:16 +0100
+
 http (1.8.0+ng4~standalone-options-2) unstable; urgency=medium
 
   * Find and preserve unminified date.js, since source website
