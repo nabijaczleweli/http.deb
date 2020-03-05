@@ -1,2 +1,2 @@
-completions/http.bash    http
-completions/httplz.bash  httplz
+target/completions/http.bash    http
+target/completions/httplz.bash  httplz

@@ -11,8 +11,13 @@ Tag: implemented-in::rust, role::program
 Build-Depends: debhelper,
                debhelper-compat (= 12),
                bash-completion,
-#              ronn,  too old, broken on my machine
-#              rustc?
+               ronn (>= 0.9.0),
+#              ^ ronn before that fails with regex+locale related errors
+               locales,
+#              ^ we need to generate some locales for ronn
+               cargo,
+               pkg-config,
+               libssl-dev,
 
 Package: http
 Architecture: any
