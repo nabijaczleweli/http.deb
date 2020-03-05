@@ -10,7 +10,7 @@ VERSION = $(shell awk '/^version/ {print $$3; exit}' Cargo.toml | sed 's/"//g')
 
 override_dh_auto_build:
 	mkdir -p completions
-	$(RONN) --organization="http developers" http.md
+	$(RONN) -r --organization="http developers" http.md
 	RUSTFLAGS=-g $(CARGO) build --release
 	cd completions && ../target/release/http-build-completions
 
@@ -27,6 +27,9 @@ override_dh_auto_install:
 	cp $(wildcard completions/_*) $(OUTDIR)usr/share/zsh/vendor-functions/
 	# https://fishshell.com/docs/current/#where-to-put-completions
 	cp $(wildcard completions/*.fish) $(OUTDIR)usr/share/fish/vendor_completions.d/
+
+override_dh_auto_clean:
+	rm -rf target/ Cargo.lock http.1
 
 # for tag in $(git tag -l | tac); do git tag -ln1000 "$tag"; echo; echo; done | awk '!/[[:space:]]+\([[:alnum:]]{40}\)$/' | sed -re 's;\([[:alnum:]]{40}\);+;g' -e 's;\(#;(https://github.com/thecoshman/http/issues/;g' -e 's;\(@;(https://github.com/;g' | head -c -2
 override_dh_installchangelogs:
