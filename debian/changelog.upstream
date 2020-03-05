@@ -1,3 +1,25 @@
+v1.9.0          Bugfixing in prod
+    
+    Fixed:
+      * Parent Directory link not showing up
+        for first-level children not ending in /
+      * Non-absolute symlink handling
+      * Typos found by evil-mode lintian
+    
+    New:
+      * Delete, Rename, and New Folder buttons
+        with write (and WebDAV for latter two) on –
+        see https://github.com/thecoshman/http/issues/93#issuecomment-549523939
+        (https://github.com/thecoshman/http/issues/93)
+      * Licensing info for icons
+      * --proxy [HEADER-NAME:CIDR] argument to improve logs behind reverse proxies
+        (https://github.com/thecoshman/http/issues/98)
+    
+    Changed:
+      * All scripts to start with "use strict;"
+      * options module to be standalone
+
+
 v1.8.0          I'm in shock, quite frankly, and so should you
     
     New:
