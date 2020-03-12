@@ -1,3 +1,11 @@
+v1.9.1          A release is not unlike a punch
+    
+    Fixed:
+      * Typo in manpage
+      * Windows installer
+        (https://github.com/thecoshman/http/issues/100)
+
+
 v1.9.0          Bugfixing in prod
     
     Fixed:
