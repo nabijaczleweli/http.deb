@@ -1,3 +1,16 @@
+v1.9.2          Now that really *was* a throwback
+    
+    Fixed:
+      * Panics when the server doesn't have permission to
+        open the requested entity
+        (https://github.com/thecoshman/http/issues/103) (https://github.com/thecoshman/http/issues/94)
+      * RFSAPI responses' is_root
+        (https://github.com/thecoshman/http/issues/104)
+      * Link to RFSAPI format spec in README
+        (also documentation in RFSAPI repo)
+        (https://github.com/thecoshman/http/issues/104)
+
+
 v1.9.1          A release is not unlike a punch
     
     Fixed:
