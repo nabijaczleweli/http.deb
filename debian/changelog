@@ -1,3 +1,11 @@
+http (1.9.3-1) unstable; urgency=medium
+
+  * New upstream version 1.9.3
+  * Fix Tag
+  * Update maintainer info
+
+ -- наб <nabijaczleweli@gmail.com>  Tue, 16 Jun 2020 19:53:01 +0200
+
 http (1.9.2-1) unstable; urgency=medium
 
   * New upstream version 1.9.2
