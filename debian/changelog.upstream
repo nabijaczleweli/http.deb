@@ -1,3 +1,15 @@
+v1.9.3          Muesli
+    
+    Fixed:
+      * Builds on musl libc
+        (https://github.com/thecoshman/http/issues/107) (https://github.com/thecoshman/http/issues/108) (https://github.com/adrianisuru)
+      * Crashes on musl libc when encoding files
+        (https://github.com/thecoshman/http/issues/109) (md6 2.0.2, no changes here)
+    
+    New:
+      * @adrianisuru in authors list
+
+
 v1.9.2          Now that really *was* a throwback
     
     Fixed:
