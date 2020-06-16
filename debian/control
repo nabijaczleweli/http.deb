@@ -1,13 +1,12 @@
 Source: http
 Section: web
 Priority: optional
-Maintainer: nabijaczleweli <nabijaczleweli@gmail.com>
+Maintainer: наб <nabijaczleweli@gmail.com>
 Standards-Version: 4.5.0
 Rules-Requires-Root: no
 Vcs-Git: https://github.com/nabijaczleweli/http.deb.git
 Vcs-Browser: https://github.com/nabijaczleweli/http.deb
 Homepage: https://github.com/thecoshman/http
-Tag: implemented-in::rust, role::program
 Build-Depends: debhelper,
                debhelper-compat (= 12),
                bash-completion,
@@ -21,6 +20,7 @@ Build-Depends: debhelper,
 
 Package: http
 Architecture: any
+Tag: implemented-in::rust, role::program
 Depends: ${misc:Depends},
          ${shlibs:Depends},
 Description: Host These Things Please - basic HTTP server
