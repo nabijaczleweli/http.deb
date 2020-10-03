@@ -15,9 +15,11 @@ use clap::{AppSettings, ErrorKind as ClapErrorKind, Error as ClapError, Arg, App
 use std::collections::btree_map::{BTreeMap, Entry as BTreeMapEntry};
 use std::collections::BTreeSet;
 use std::env::{self, temp_dir};
+use std::num::NonZeroU64;
 use std::path::PathBuf;
 use std::str::FromStr;
 use std::borrow::Cow;
+use iron::mime::Mime;
 use std::net::IpAddr;
 use regex::Regex;
 use cidr::IpCidr;
@@ -76,6 +78,8 @@ pub struct Options {
     pub temp_directory: (String, PathBuf),
     /// Whether to check for index files in served directories before serving a listing. Default: true
     pub check_indices: bool,
+    /// Whether to allow requests to `/file` to return `/file.{INDEX_EXTENSIONS`. Default: false
+    pub strip_extensions: bool,
     /// Whether to allow write operations. Default: false
     pub allow_writes: bool,
     /// Whether to encode filesystem files. Default: true
@@ -86,6 +90,8 @@ pub struct Options {
     ///   * >= 2 – suppress startup except for auth data, if present
     ///   * >= 3 – suppress all startup messages
     pub loglevel: LogLevel,
+    /// Whether to colourise the log output. Default: `true`
+    pub log_colour: bool,
     /// Whether to handle WebDAV requests. Default: false
     pub webdav: bool,
     /// Data for HTTPS, identity file and password. Default: `None`
@@ -98,6 +104,10 @@ pub struct Options {
     pub generate_path_auth: BTreeSet<String>,
     /// Header names and who we trust them from in `HEADER-NAME:CIDR` format
     pub proxies: BTreeMap<IpCidr, String>,
+    /// Extension -> MIME type mapping overrides; empty string for no extension
+    pub mime_type_overrides: BTreeMap<String, Mime>,
+    /// Max amount of data per second each request is allowed to return. Default: `None`
+    pub request_bandwidth: Option<NonZeroU64>,
 }
 
 impl Options {
@@ -120,7 +130,9 @@ impl Options {
             .arg(Arg::from_usage("-w --allow-write 'Allow for write operations. Default: false'"))
             .arg(Arg::from_usage("-i --no-indices 'Always generate dir listings even if index files are available. Default: false'"))
             .arg(Arg::from_usage("-e --no-encode 'Do not encode filesystem files. Default: false'"))
+            .arg(Arg::from_usage("-x --strip-extensions 'Allow stripping index extentions from served paths. Default: false'"))
             .arg(Arg::from_usage("-q --quiet... 'Suppress increasing amounts of output'"))
+            .arg(Arg::from_usage("-c --no-colour 'Don't colourise the log output'"))
             .arg(Arg::from_usage("-d --webdav 'Handle WebDAV requests. Default: false'"))
             .arg(Arg::from_usage("--ssl [TLS_IDENTITY] 'Data for HTTPS, identity file. Password in HTTP_SSL_PASS env var, otherwise empty'")
                 .validator(Options::identity_validator))
@@ -132,6 +144,10 @@ impl Options {
             .arg(Arg::from_usage("--gen-path-auth [PATH]... 'Generate a one-off username:password set for authentication under PATH'"))
             .arg(Arg::from_usage("--proxy [HEADER-NAME:CIDR]... 'Treat HEADER-NAME as proxy forwarded-for header when request comes from CIDR'")
                 .validator(|s| Options::proxy_parse(s.into()).map(|_| ())))
+            .arg(Arg::from_usage("-m --mime-type [EXTENSION:MIME-TYPE]... 'Always return MIME-TYPE for files with EXTENSION'")
+                .validator(|s| Options::mime_type_override_parse(s.into()).map(|_| ())))
+            .arg(Arg::from_usage("--request-bandwidth [BYTES] 'Limit each request to returning BYTES per second, or 0 for unlimited. Default: 0'")
+                .validator(|s| Options::bandwidth_parse(s.into()).map(|_| ())))
             .get_matches();
 
         let dir = matches.value_of("DIR").unwrap_or(".");
@@ -195,15 +211,24 @@ impl Options {
                  temp_pb.join(suffix))
             },
             check_indices: !matches.is_present("no-indices"),
+            strip_extensions: matches.is_present("strip-extensions"),
             allow_writes: matches.is_present("allow-write"),
             encode_fs: !matches.is_present("no-encode"),
             loglevel: matches.occurrences_of("quiet").into(),
+            log_colour: !matches.is_present("no-colour"),
             webdav: matches.is_present("webdav"),
             tls_data: matches.value_of("ssl").map(|id| ((id.to_string(), fs::canonicalize(id).unwrap()), env::var("HTTP_SSL_PASS").unwrap_or_default())),
             generate_tls: matches.is_present("gen-ssl"),
             path_auth_data: path_auth_data,
             generate_path_auth: generate_path_auth,
             proxies: matches.values_of("proxy").unwrap_or_default().map(Cow::from).map(Options::proxy_parse).map(Result::unwrap).collect(),
+            mime_type_overrides: matches.values_of("mime-type")
+                .unwrap_or_default()
+                .map(Cow::from)
+                .map(Options::mime_type_override_parse)
+                .map(Result::unwrap)
+                .collect(),
+            request_bandwidth: matches.value_of("request-bandwidth").map(Cow::from).map(Options::bandwidth_parse).map(Result::unwrap).unwrap_or_default(),
         }
     }
 
@@ -302,6 +327,47 @@ impl Options {
                 let mut s = s.into_owned();
                 s.truncate(col_idx);
                 Ok((cidr, s))
+            }
+        }
+    }
+
+    fn bandwidth_parse<'s>(s_orig: Cow<'s, str>) -> Result<Option<NonZeroU64>, String> {
+        let s = s_orig.trim();
+        let multiplier_b = s.as_bytes().get(s.len() - 1).ok_or_else(|| format!("\"{}\" bandwidth specifier empty", s_orig))?;
+        let multiplier_order = match multiplier_b {
+            b'k' | b'K' => 1,
+            b'm' | b'M' => 2,
+            b'g' | b'G' => 3,
+            b't' | b'T' => 4,
+            b'p' | b'P' => 5,
+            b'e' | b'E' => 6,
+            _ => 0,
+        };
+        let (multiplier, s) = match multiplier_order {
+            0 => (1, s),
+            mo => {
+                let base: u64 = if (*multiplier_b as char).is_uppercase() {
+                    1024
+                } else {
+                    1000
+                };
+                (base.pow(mo), &s[..s.len() - 1]) // No need to check, E is 2^60
+            }
+        };
+
+        let number = u64::from_str(s).map_err(|e| format!("\"{}\" not band width size: {}", s, e))?;
+        Ok(NonZeroU64::new(number.checked_mul(multiplier).ok_or_else(|| format!("{} * {} too big", number, multiplier))?))
+    }
+
+    fn mime_type_override_parse<'s>(s: Cow<'s, str>) -> Result<(String, Mime), String> {
+        match s.find(":") {
+            None => Err(format!("{} not in EXTENSION:MIME-TYPE format", s)),
+            Some(col_idx) => {
+                let mt = s[col_idx + 1..].parse().map_err(|()| format!("{} not a valid MIME type", &s[col_idx + 1..]))?;
+
+                let mut s = s.into_owned();
+                s.truncate(col_idx);
+                Ok((s, mt))
             }
         }
     }

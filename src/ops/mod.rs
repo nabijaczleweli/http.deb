@@ -1,21 +1,21 @@
 use md6;
 use std::fmt;
 use serde_json;
+use std::ffi::OsStr;
 use std::borrow::Cow;
 use std::net::IpAddr;
 use serde::Serialize;
 use unicase::UniCase;
-use iron::mime::Mime;
 use std::sync::RwLock;
 use lazysort::SortedBy;
-use std::path::PathBuf;
 use cidr::{Cidr, IpCidr};
 use std::fs::{self, File};
 use std::default::Default;
 use rand::{Rng, thread_rng};
 use iron::modifiers::Header;
+use std::path::{PathBuf, Path};
 use iron::url::Url as GenericUrl;
-use mime_guess::guess_mime_type_opt;
+use mime_guess::get_mime_type_opt;
 use hyper_native_tls::NativeTlsServer;
 use std::collections::{BTreeMap, HashMap};
 use self::super::{LogLevel, Options, Error};
@@ -23,6 +23,7 @@ use std::process::{ExitStatus, Command, Child, Stdio};
 use rfsapi::{RawFsApiHeader, FilesetData, RawFileData};
 use rand::distributions::uniform::Uniform as UniformDistribution;
 use rand::distributions::Alphanumeric as AlphanumericDistribution;
+use iron::mime::{Mime, SubLevel as MimeSubLevel, TopLevel as MimeTopLevel};
 use std::io::{self, ErrorKind as IoErrorKind, SeekFrom, Write, Error as IoError, Read, Seek};
 use iron::{headers, status, method, mime, IronResult, Listening, Response, TypeMap, Request, Handler, Iron};
 use self::super::util::{WwwAuthenticate, DisplayThree, CommaList, Spaces, Dav, url_path, file_hash, is_symlink, encode_str, encode_file, file_length,
@@ -33,46 +34,78 @@ use self::super::util::{WwwAuthenticate, DisplayThree, CommaList, Spaces, Dav, u
 
 
 macro_rules! log {
-    ($do_log:expr, $fmt:expr) => {
+    ($logcfg:expr, $fmt:expr) => {
         use time::now;
         use trivial_colours::{Reset as CReset, Colour as C};
 
-        if $do_log {
-            print!("{}[{}]{} ", C::Cyan, now().strftime("%F %T").unwrap(), CReset);
-            println!(concat!($fmt, "{black:.0}{red:.0}{green:.0}{yellow:.0}{blue:.0}{magenta:.0}{cyan:.0}{white:.0}{reset:.0}"),
-                     black = C::Black,
-                     red = C::Red,
-                     green = C::Green,
-                     yellow = C::Yellow,
-                     blue = C::Blue,
-                     magenta = C::Magenta,
-                     cyan = C::Cyan,
-                     white = C::White,
-                     reset = CReset);
+        if $logcfg.0 {
+            if $logcfg.1 {
+                print!("{}[{}]{} ", C::Cyan, now().strftime("%F %T").unwrap(), CReset);
+                println!(concat!($fmt, "{black:.0}{red:.0}{green:.0}{yellow:.0}{blue:.0}{magenta:.0}{cyan:.0}{white:.0}{reset:.0}"),
+                         black = C::Black,
+                         red = C::Red,
+                         green = C::Green,
+                         yellow = C::Yellow,
+                         blue = C::Blue,
+                         magenta = C::Magenta,
+                         cyan = C::Cyan,
+                         white = C::White,
+                         reset = CReset);
+            } else {
+                print!("[{}] ", now().strftime("%F %T").unwrap());
+                println!(concat!($fmt, "{black:.0}{red:.0}{green:.0}{yellow:.0}{blue:.0}{magenta:.0}{cyan:.0}{white:.0}{reset:.0}"),
+                         black = "",
+                         red = "",
+                         green = "",
+                         yellow = "",
+                         blue = "",
+                         magenta = "",
+                         cyan = "",
+                         white = "",
+                         reset = "");
+            }
         }
     };
-    ($do_log:expr, $fmt:expr, $($arg:tt)*) => {
+    ($logcfg:expr, $fmt:expr, $($arg:tt)*) => {
         use time::now;
         use trivial_colours::{Reset as CReset, Colour as C};
 
-        if $do_log {
-            print!("{}[{}]{} ", C::Cyan, now().strftime("%F %T").unwrap(), CReset);
-            println!(concat!($fmt, "{black:.0}{red:.0}{green:.0}{yellow:.0}{blue:.0}{magenta:.0}{cyan:.0}{white:.0}{reset:.0}"),
-                     $($arg)*,
-                     black = C::Black,
-                     red = C::Red,
-                     green = C::Green,
-                     yellow = C::Yellow,
-                     blue = C::Blue,
-                     magenta = C::Magenta,
-                     cyan = C::Cyan,
-                     white = C::White,
-                     reset = CReset);
+        if $logcfg.0 {
+            if $logcfg.1 {
+                print!("{}[{}]{} ", C::Cyan, now().strftime("%F %T").unwrap(), CReset);
+                println!(concat!($fmt, "{black:.0}{red:.0}{green:.0}{yellow:.0}{blue:.0}{magenta:.0}{cyan:.0}{white:.0}{reset:.0}"),
+                         $($arg)*,
+                         black = C::Black,
+                         red = C::Red,
+                         green = C::Green,
+                         yellow = C::Yellow,
+                         blue = C::Blue,
+                         magenta = C::Magenta,
+                         cyan = C::Cyan,
+                         white = C::White,
+                         reset = CReset);
+            } else {
+                print!("[{}] ", now().strftime("%F %T").unwrap());
+                println!(concat!($fmt, "{black:.0}{red:.0}{green:.0}{yellow:.0}{blue:.0}{magenta:.0}{cyan:.0}{white:.0}{reset:.0}"),
+                         $($arg)*,
+                         black = "",
+                         red = "",
+                         green = "",
+                         yellow = "",
+                         blue = "",
+                         magenta = "",
+                         cyan = "",
+                         white = "",
+                         reset = "");
+            }
         }
     };
 }
 
 mod webdav;
+mod bandwidth;
+
+pub use self::bandwidth::{LimitBandwidthMiddleware, SimpleChain};
 
 
 // TODO: ideally this String here would be Encoding instead but hyper is bad
@@ -83,13 +116,16 @@ pub struct HttpHandler {
     pub follow_symlinks: bool,
     pub sandbox_symlinks: bool,
     pub check_indices: bool,
-    pub log: bool,
+    pub strip_extensions: bool,
+    /// (at all, log_colour)
+    pub log: (bool, bool),
     pub webdav: bool,
     pub global_auth_data: Option<(String, Option<String>)>,
     pub path_auth_data: BTreeMap<String, Option<(String, Option<String>)>>,
     pub writes_temp_dir: Option<(String, PathBuf)>,
     pub encoded_temp_dir: Option<(String, PathBuf)>,
     pub proxies: BTreeMap<IpCidr, String>,
+    pub mime_type_overrides: BTreeMap<String, Mime>,
     cache_gen: RwLock<CacheT<Vec<u8>>>,
     cache_fs: RwLock<CacheT<(PathBuf, bool)>>,
 }
@@ -118,7 +154,8 @@ impl HttpHandler {
             follow_symlinks: opts.follow_symlinks,
             sandbox_symlinks: opts.sandbox_symlinks,
             check_indices: opts.check_indices,
-            log: opts.loglevel < LogLevel::NoServeStatus,
+            strip_extensions: opts.strip_extensions,
+            log: (opts.loglevel < LogLevel::NoServeStatus, opts.log_colour),
             webdav: opts.webdav,
             global_auth_data: global_auth_data,
             path_auth_data: path_auth_data,
@@ -127,13 +164,16 @@ impl HttpHandler {
             cache_gen: Default::default(),
             cache_fs: Default::default(),
             proxies: opts.proxies.clone(),
+            mime_type_overrides: opts.mime_type_overrides.clone(),
         }
     }
 
-    pub fn clean_temp_dirs(temp_dir: &(String, PathBuf), loglevel: LogLevel) {
+    pub fn clean_temp_dirs(temp_dir: &(String, PathBuf), loglevel: LogLevel, log_colour: bool) {
         for (temp_name, temp_dir) in ["writes", "encoded", "tls"].iter().flat_map(|tn| HttpHandler::temp_subdir(temp_dir, true, tn)) {
             if temp_dir.exists() && fs::remove_dir_all(&temp_dir).is_ok() {
-                log!(loglevel < LogLevel::NoServeStatus, "Deleted temp dir {magenta}{}{reset}", temp_name);
+                log!((loglevel < LogLevel::NoServeStatus, log_colour),
+                     "Deleted temp dir {magenta}{}{reset}",
+                     temp_name);
             }
         }
     }
@@ -287,10 +327,16 @@ impl HttpHandler {
     }
 
     fn handle_get(&self, req: &mut Request) -> IronResult<Response> {
-        let (req_p, symlink, url_err) = self.parse_requested_path(req);
+        let (mut req_p, symlink, url_err) = self.parse_requested_path(req);
 
         if url_err {
             return self.handle_invalid_url(req, "<p>Percent-encoding decoded to invalid UTF-8.</p>");
+        }
+
+        if !req_p.exists() && req_p.extension().is_none() && self.strip_extensions {
+            if let Some(rp) = INDEX_EXTENSIONS.iter().map(|ext| req_p.with_extension(ext)).find(|rp| rp.exists()) {
+                req_p = rp;
+            }
         }
 
         if !req_p.exists() || (symlink && !self.follow_symlinks) ||
@@ -396,11 +442,7 @@ impl HttpHandler {
     }
 
     fn handle_get_file_closed_range(&self, req: &mut Request, req_p: PathBuf, from: u64, to: u64) -> IronResult<Response> {
-        let mime_type = guess_mime_type_opt(&req_p).unwrap_or_else(|| if file_binary(&req_p) {
-            "application/octet-stream".parse().unwrap()
-        } else {
-            "text/plain".parse().unwrap()
-        });
+        let mime_type = self.guess_mime_type(&req_p);
         log!(self.log,
              "{} was served byte range {}-{} of file {magenta}{}{reset} as {blue}{}{reset}",
              self.remote_addresses(&req),
@@ -427,11 +469,7 @@ impl HttpHandler {
     }
 
     fn handle_get_file_right_opened_range(&self, req: &mut Request, req_p: PathBuf, from: u64) -> IronResult<Response> {
-        let mime_type = guess_mime_type_opt(&req_p).unwrap_or_else(|| if file_binary(&req_p) {
-            "application/octet-stream".parse().unwrap()
-        } else {
-            "text/plain".parse().unwrap()
-        });
+        let mime_type = self.guess_mime_type(&req_p);
         log!(self.log,
              "{} was served file {magenta}{}{reset} from byte {} as {blue}{}{reset}",
              self.remote_addresses(&req),
@@ -444,11 +482,7 @@ impl HttpHandler {
     }
 
     fn handle_get_file_left_opened_range(&self, req: &mut Request, req_p: PathBuf, from: u64) -> IronResult<Response> {
-        let mime_type = guess_mime_type_opt(&req_p).unwrap_or_else(|| if file_binary(&req_p) {
-            "application/octet-stream".parse().unwrap()
-        } else {
-            "text/plain".parse().unwrap()
-        });
+        let mime_type = self.guess_mime_type(&req_p);
         log!(self.log,
              "{} was served last {} bytes of file {magenta}{}{reset} as {blue}{}{reset}",
              self.remote_addresses(&req),
@@ -491,11 +525,7 @@ impl HttpHandler {
     }
 
     fn handle_get_file_empty_range(&self, req: &mut Request, req_p: PathBuf, from: u64, to: u64) -> IronResult<Response> {
-        let mime_type = guess_mime_type_opt(&req_p).unwrap_or_else(|| if file_binary(&req_p) {
-            "application/octet-stream".parse().unwrap()
-        } else {
-            "text/plain".parse().unwrap()
-        });
+        let mime_type = self.guess_mime_type(&req_p);
         log!(self.log,
              "{} was served an empty range from file {magenta}{}{reset} as {blue}{}{reset}",
              self.remote_addresses(&req),
@@ -514,11 +544,7 @@ impl HttpHandler {
     }
 
     fn handle_get_file(&self, req: &mut Request, req_p: PathBuf) -> IronResult<Response> {
-        let mime_type = guess_mime_type_opt(&req_p).unwrap_or_else(|| if file_binary(&req_p) {
-            "application/octet-stream".parse().unwrap()
-        } else {
-            "text/plain".parse().unwrap()
-        });
+        let mime_type = self.guess_mime_type(&req_p);
         log!(self.log,
              "{} was served file {magenta}{}{reset} as {blue}{}{reset}",
              self.remote_addresses(&req),
@@ -1276,7 +1302,21 @@ impl HttpHandler {
         AddressWriter {
             request: req,
             proxies: &self.proxies,
+            log: self.log,
         }
+    }
+
+    fn guess_mime_type(&self, req_p: &Path) -> Mime {
+        // Based on mime_guess::guess_mime_type_opt(); that one does to_str() instead of to_string_lossy()
+        let ext = req_p.extension().map(OsStr::to_string_lossy).unwrap_or("".into());
+
+        (self.mime_type_overrides.get(&*ext).cloned())
+            .or_else(|| get_mime_type_opt(&*ext))
+            .unwrap_or_else(|| if file_binary(req_p) {
+                Mime(MimeTopLevel::Application, MimeSubLevel::OctetStream, Default::default()) // "application/octet-stream"
+            } else {
+                Mime(MimeTopLevel::Text, MimeSubLevel::Plain, Default::default()) // "text/plain"
+            })
     }
 }
 
@@ -1287,6 +1327,7 @@ impl Clone for HttpHandler {
             follow_symlinks: self.follow_symlinks,
             sandbox_symlinks: self.sandbox_symlinks,
             check_indices: self.check_indices,
+            strip_extensions: self.strip_extensions,
             log: self.log,
             webdav: self.webdav,
             global_auth_data: self.global_auth_data.clone(),
@@ -1294,6 +1335,7 @@ impl Clone for HttpHandler {
             writes_temp_dir: self.writes_temp_dir.clone(),
             encoded_temp_dir: self.encoded_temp_dir.clone(),
             proxies: self.proxies.clone(),
+            mime_type_overrides: self.mime_type_overrides.clone(),
             cache_gen: Default::default(),
             cache_fs: Default::default(),
         }
@@ -1304,19 +1346,29 @@ impl Clone for HttpHandler {
 pub struct AddressWriter<'r, 'p, 'ra, 'rb: 'ra> {
     pub request: &'r Request<'ra, 'rb>,
     pub proxies: &'p BTreeMap<IpCidr, String>,
+    /// (at all, log_colour)
+    pub log: (bool, bool),
 }
 
 impl<'r, 'p, 'ra, 'rb: 'ra> fmt::Display for AddressWriter<'r, 'p, 'ra, 'rb> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         use trivial_colours::{Reset as CReset, Colour as C};
 
-        write!(f, "{green}{}{reset}", self.request.remote_addr, green = C::Green, reset = CReset)?;
+        if self.log.1 {
+            write!(f, "{green}{}{reset}", self.request.remote_addr, green = C::Green, reset = CReset)?;
+        } else {
+            write!(f, "{}", self.request.remote_addr)?;
+        }
 
         for (network, header) in self.proxies {
             if network.contains(&self.request.remote_addr.ip()) {
                 if let Some(saddrs) = self.request.headers.get_raw(header) {
                     for saddr in saddrs {
-                        write!(f, " for {green}{}{reset}", String::from_utf8_lossy(saddr), green = C::Green, reset = CReset)?;
+                        if self.log.1 {
+                            write!(f, " for {green}{}{reset}", String::from_utf8_lossy(saddr), green = C::Green, reset = CReset)?;
+                        } else {
+                            write!(f, " for {}", String::from_utf8_lossy(saddr))?;
+                        }
                     }
                 }
             }
