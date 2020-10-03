@@ -4,16 +4,16 @@ Subject: Add binary for generating shell completion files
 
 ---
  Cargo.toml                    |  6 ++++++
- src/http-build-completions.rs | 22 ++++++++++++++++++++++
+ src/http-build-completions.rs | 23 +++++++++++++++++++++++
  src/options.rs                | 10 +++++++---
- 3 files changed, 35 insertions(+), 3 deletions(-)
- create mode 100755 src/http-build-completions.rs
+ 3 files changed, 36 insertions(+), 3 deletions(-)
+ create mode 100644 src/http-build-completions.rs
 
 diff --git a/Cargo.toml b/Cargo.toml
-index 74cffac..b43fff3 100644
+index 8875e0f..3001ecb 100644
 --- a/Cargo.toml
 +++ b/Cargo.toml
-@@ -75,6 +75,12 @@ path = "src/main.rs"
+@@ -76,6 +76,12 @@ path = "src/main.rs"
  test = false
  doc = false
  
@@ -27,17 +27,18 @@ index 74cffac..b43fff3 100644
  [package.metadata.deb]
  name = "http"
 diff --git a/src/http-build-completions.rs b/src/http-build-completions.rs
-new file mode 100755
-index 0000000..f1be2ad
+new file mode 100644
+index 0000000..c5614e1
 --- /dev/null
 +++ b/src/http-build-completions.rs
-@@ -0,0 +1,22 @@
+@@ -0,0 +1,23 @@
 +#[macro_use]
 +extern crate lazy_static;
 +extern crate regex;
 +extern crate cidr;
 +#[macro_use]
 +extern crate clap;
++extern crate iron;
 +
 +mod options;
 +
@@ -55,10 +56,10 @@ index 0000000..f1be2ad
 +    }
 +}
 diff --git a/src/options.rs b/src/options.rs
-index b5702a7..0e79e7c 100644
+index 06026ee..2e09161 100644
 --- a/src/options.rs
 +++ b/src/options.rs
-@@ -101,9 +101,8 @@ pub struct Options {
+@@ -111,9 +111,8 @@ pub struct Options {
  }
  
  impl Options {
@@ -70,10 +71,10 @@ index b5702a7..0e79e7c 100644
              .version(crate_version!())
              .author(crate_authors!("\n"))
              .about(crate_description!())
-@@ -132,6 +131,11 @@ impl Options {
-             .arg(Arg::from_usage("--gen-path-auth [PATH]... 'Generate a one-off username:password set for authentication under PATH'"))
-             .arg(Arg::from_usage("--proxy [HEADER-NAME:CIDR]... 'Treat HEADER-NAME as proxy forwarded-for header when request comes from CIDR'")
-                 .validator(|s| Options::proxy_parse(s.into()).map(|_| ())))
+@@ -148,6 +147,11 @@ impl Options {
+                 .validator(|s| Options::mime_type_override_parse(s.into()).map(|_| ())))
+             .arg(Arg::from_usage("--request-bandwidth [BYTES] 'Limit each request to returning BYTES per second, or 0 for unlimited. Default: 0'")
+                 .validator(|s| Options::bandwidth_parse(s.into()).map(|_| ())))
 +    }
 +
 +    /// Parse `env`-wide command-line arguments into an `Options` instance
