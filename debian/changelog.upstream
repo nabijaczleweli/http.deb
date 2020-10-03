@@ -1,3 +1,19 @@
+v1.10.0         Don't ask Tech, ask me if it's questions
+    
+    New:
+      * --request-bandwidth option to reduce max speed of each request
+        (https://github.com/thecoshman/http/issues/102)
+      * -m/--mime-type option to override guessed MIME types per-extension
+        (https://github.com/thecoshman/http/issues/111)
+      * -c/--no-colour option to disable colours in output
+        (https://github.com/thecoshman/http/issues/114)
+      * -x/--strip-extensions option to serve /file.{html,htm,shtml} as /file
+        (https://github.com/thecoshman/http/issues/113)
+    
+    Internal:
+      * AppVeyor CI/MSYS2 fixes
+
+
 v1.9.3          Muesli
     
     Fixed:
