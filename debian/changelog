@@ -1,3 +1,10 @@
+http (1.10.0-1) unstable; urgency=medium
+
+  * New upstream version 1.10.0
+  * Rebase patches
+
+ -- наб <nabijaczleweli@nabijaczleweli.xyz>  Sat, 03 Oct 2020 22:12:10 +0200
+
 http (1.9.3-1) unstable; urgency=medium
 
   * New upstream version 1.9.3
