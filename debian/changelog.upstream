@@ -1,3 +1,20 @@
+v1.10.1         God will be back any day, any second, so wait for the day that He spray and we die
+    
+    Changed:
+      * /owo/awa -> /owo/awa/ redirects
+        from 301 Moved Permanently to 303 See Other
+    
+    Fixed:
+      * Defa[ui]lt typo in manpage
+      * Cross-compilation across libcs (glibc/musl in particular)
+        (https://github.com/thecoshman/http/issues/120)
+      * AppVeyor builds
+    
+    New:
+      * Escaping of square brackets in URLs in generated incides
+        (https://github.com/thecoshman/http/issues/119)
+
+
 v1.10.0         Don't ask Tech, ask me if it's questions
     
     New:
