@@ -740,7 +740,7 @@ impl HttpHandler {
         //     https://cloud.githubusercontent.com/assets/6709544/21442017/9eb20d64-c89b-11e6-8c7b-888b5f70a403.png
         //   - With following slash:
         //     https://cloud.githubusercontent.com/assets/6709544/21442028/a50918c4-c89b-11e6-8936-c29896947f6a.png
-        Ok(Response::with((status::MovedPermanently, Header(headers::Server(USER_AGENT.to_string())), Header(headers::Location(new_url)))))
+        Ok(Response::with((status::SeeOther, Header(headers::Server(USER_AGENT.to_string())), Header(headers::Location(new_url)))))
     }
 
     fn handle_get_mobile_dir_listing(&self, req: &mut Request, req_p: PathBuf) -> IronResult<Response> {
@@ -763,7 +763,7 @@ impl HttpHandler {
                     file_time_modified_p(req_p.parent().expect("Failed to get requested directory's parent directory"))
                         .strftime("%F %T")
                         .unwrap(),
-                    up_path = slash_idx.map(|i| &rel_noslash[0..i]).unwrap_or(""),
+                    up_path = slash_idx.map(|i| &rel_noslash[0..i]).unwrap_or("").replace('%', "%25").replace('#', "%23").replace('[', "%5B").replace(']', "%5D"),
                     up_path_slash = if slash_idx.is_some() { "/" } else { "" })
         };
         let list_s = req_p.read_dir()
@@ -815,8 +815,8 @@ impl HttpHandler {
                         } else {
                             DisplayThree("", String::new(), "")
                         },
-                        path = format!("/{}", relpath).replace("//", "/").replace('%', "%25").replace('#', "%23"),
-                        fname = fname.replace('%', "%25").replace('#', "%23"))
+                        path = format!("/{}", relpath).replace("//", "/").replace('%', "%25").replace('#', "%23").replace('[', "%5B").replace(']', "%5D"),
+                        fname = fname.replace('%', "%25").replace('#', "%23").replace('[', "%5B").replace(']', "%5D"))
             });
 
         self.handle_generated_response_encoding(req,
@@ -866,7 +866,7 @@ impl HttpHandler {
                          <td><a href=\"/{up_path}{up_path_slash}\">&nbsp;</a></td> \
                          <td><a href=\"/{up_path}{up_path_slash}\">&nbsp;</a></td></tr>",
                     file_time_modified_p(req_p.parent().expect("Failed to get requested directory's parent directory")).strftime("%F %T").unwrap(),
-                    up_path = slash_idx.map(|i| &rel_noslash[0..i]).unwrap_or(""),
+                    up_path = slash_idx.map(|i| &rel_noslash[0..i]).unwrap_or("").replace('%', "%25").replace('#', "%23").replace('[', "%5B").replace(']', "%5D"),
                     up_path_slash = if slash_idx.is_some() { "/" } else { "" })
         };
 
@@ -930,8 +930,8 @@ impl HttpHandler {
                         } else {
                             DisplayThree("", "", "")
                         },
-                        path = format!("/{}", relpath).replace("//", "/").replace('%', "%25").replace('#', "%23"),
-                        fname = fname.replace('%', "%25").replace('#', "%23"))
+                        path = format!("/{}", relpath).replace("//", "/").replace('%', "%25").replace('#', "%23").replace('[', "%5B").replace(']', "%5D"),
+                        fname = fname.replace('%', "%25").replace('#', "%23").replace('[', "%5B").replace(']', "%5D"))
             });
 
         self.handle_generated_response_encoding(req,
