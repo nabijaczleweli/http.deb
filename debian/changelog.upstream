@@ -1,3 +1,15 @@
+v1.11.0         Reverse the gun and curse the one whose purpose is to hurt us
+    
+    New:
+      * Note about the httplz binary in README
+      * -l/--no-listings to 404 instead of generating a dir listing
+        (https://github.com/thecoshman/http/issues/122) (https://github.com/cyqsimon)
+      * @cyqsimon in authors list
+    
+    Fixed:
+      * AppVeyor builds
+
+
 v1.10.1         God will be back any day, any second, so wait for the day that He spray and we die
     
     Changed:
