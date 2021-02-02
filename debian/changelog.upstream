@@ -1,3 +1,13 @@
+v1.11.1         Why does the devil be callin' my name?
+    
+    Fixed:
+      * Links to files with names ending with whitespace in generated indices
+        (https://github.com/thecoshman/http/issues/124)
+      * Non-URI-encoded filename components yielding unexpected names
+        when uploading via generated index
+        (https://github.com/thecoshman/http/issues/124) (https://github.com/thecoshman/http/issues/125) (https://github.com/cyqsimon: draft, testing)
+
+
 v1.11.0         Reverse the gun and curse the one whose purpose is to hurt us
     
     New:
