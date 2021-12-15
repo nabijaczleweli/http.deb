@@ -240,6 +240,23 @@ pub fn encode_tail_if_trimmed(mut s: String) -> String {
     }
 }
 
+/// %-escape special characters in an URL
+pub fn escape_specials<S: AsRef<str>>(s: S) -> String {
+    let s = s.as_ref();
+    let mut ret = Vec::with_capacity(s.len());
+    for &b in s.as_bytes() {
+        match b {
+            b'%' => ret.extend(b"%25"),
+            b'#' => ret.extend(b"%23"),
+            b'?' => ret.extend(b"%3F"),
+            b'[' => ret.extend(b"%5B"),
+            b']' => ret.extend(b"%5D"),
+            _ => ret.push(b),
+        }
+    }
+    unsafe { String::from_utf8_unchecked(ret) }
+}
+
 /// Check if the specified file is to be considered "binary".
 ///
 /// Basically checks is a file is UTF-8.
@@ -339,7 +356,7 @@ pub fn file_time_modified(m: &Metadata) -> Tm {
 
 /// Get the timestamp of the file's last modification as a `time::Tm` in UTC.
 pub fn file_time_created(m: &Metadata) -> Tm {
-    file_time_impl(m.created().expect("Failed to get file created date"))
+    file_time_impl(m.created().or_else(|_| m.modified()).expect("Failed to get file created date"))
 }
 
 /// Get the timestamp of the file's last access as a `time::Tm` in UTC.
@@ -385,8 +402,8 @@ pub fn is_symlink<P: AsRef<Path>>(p: P) -> bool {
 }
 
 /// Check if a path refers to a file in a way that includes Unix devices and Windows symlinks.
-pub fn is_actually_file(tp: &FileType) -> bool {
-    tp.is_file() || is_device(tp)
+pub fn is_actually_file<P: AsRef<Path>>(tp: &FileType, p: P) -> bool {
+    tp.is_file() || (tp.is_symlink() && fs::metadata(p).map(|m| is_actually_file(&m.file_type(), "")).unwrap_or(false)) || is_device(tp)
 }
 
 /// Check if the specified path is a direct descendant (or an equal) of the specified path.
@@ -560,7 +577,7 @@ pub fn copy_dir(from: &Path, to: &Path) -> IoResult<Vec<(IoError, String)>> {
 
         let target_path = to.join(relative_path);
 
-        if !is_actually_file(&source_metadata.file_type()) {
+        if !is_actually_file(&source_metadata.file_type(), entry.path()) {
             push_error!(errors, relative_path, fs::create_dir(&target_path));
             push_error!(errors, relative_path, fs::set_permissions(&target_path, source_metadata.permissions()));
         } else {

@@ -57,8 +57,12 @@ pass parameters like what port to use.
 
   --gen-ssl
 
-    Generate a passwordless, single-use TLS self-signed certificate
+    Generate a single-use self-signed TLS certificate
     and use it for this session.
+
+    The password for the certificate is the empty string,
+    except on MacOS, where it's "password", since the platform libssl
+    refuses to import passwordless certificates.
 
     Exclusive with --ssl. Default: false.
 
@@ -141,6 +145,12 @@ pass parameters like what port to use.
     Zero disables capping.
 
     Default: 0.
+
+  -H --header [NAME: VALUE]...
+
+    Add the specified headers to all resposes.
+
+    VALUE is left-trimmed.
 
   -s --no-follow-symlinks
 
@@ -453,7 +463,8 @@ Written by thecoshman &lt;<rust@thecoshman.com>&gt;,
            nabijaczleweli &lt;<nabijaczleweli@nabijaczleweli.xyz>&gt;,
            pheki,
            Adrian Herath &lt;<adrianisuru@gmail.com>&gt;,
-       and cyqsimon.
+           cyqsimon,
+       and jim4067.
 
 ## REPORTING BUGS
 
