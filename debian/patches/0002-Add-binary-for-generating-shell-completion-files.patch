@@ -10,10 +10,10 @@ Subject: Add binary for generating shell completion files
  create mode 100644 src/http-build-completions.rs
 
 diff --git a/Cargo.toml b/Cargo.toml
-index 8875e0f..3001ecb 100644
+index 91ea3e7..5cdc4fd 100644
 --- a/Cargo.toml
 +++ b/Cargo.toml
-@@ -76,6 +76,12 @@ path = "src/main.rs"
+@@ -78,6 +78,12 @@ path = "src/main.rs"
  test = false
  doc = false
  
@@ -56,10 +56,10 @@ index 0000000..c5614e1
 +    }
 +}
 diff --git a/src/options.rs b/src/options.rs
-index 06026ee..2e09161 100644
+index 17d4742..0969377 100644
 --- a/src/options.rs
 +++ b/src/options.rs
-@@ -111,9 +111,8 @@ pub struct Options {
+@@ -116,9 +116,8 @@ pub struct Options {
  }
  
  impl Options {
@@ -71,10 +71,10 @@ index 06026ee..2e09161 100644
              .version(crate_version!())
              .author(crate_authors!("\n"))
              .about(crate_description!())
-@@ -148,6 +147,11 @@ impl Options {
-                 .validator(|s| Options::mime_type_override_parse(s.into()).map(|_| ())))
-             .arg(Arg::from_usage("--request-bandwidth [BYTES] 'Limit each request to returning BYTES per second, or 0 for unlimited. Default: 0'")
-                 .validator(|s| Options::bandwidth_parse(s.into()).map(|_| ())))
+@@ -160,6 +159,11 @@ impl Options {
+             .arg(Arg::from_usage("-H --header [NAME: VALUE]... 'Headers to add to every response'")
+                 .use_delimiter(false)
+                 .validator(|s| Options::header_parse(&s).map(|_| ())))
 +    }
 +
 +    /// Parse `env`-wide command-line arguments into an `Options` instance
