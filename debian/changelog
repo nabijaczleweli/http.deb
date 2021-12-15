@@ -1,3 +1,13 @@
+http (1.12.2-1) unstable; urgency=medium
+
+  * New upstream version 1.12.2
+  * Update upstream changelog
+  * Move new stanza to generate upstream changelog to d/R.s
+  * Rebase patches
+  * Clean out unused variables from d/rules
+
+ -- наб <nabijaczleweli@nabijaczleweli.xyz>  Wed, 15 Dec 2021 15:19:42 +0100
+
 http (1.11.1-1) unstable; urgency=medium
 
   * New upstream version 1.11.1
