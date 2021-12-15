@@ -1,5 +1,51 @@
+v1.12.2         Done up and fixed on
+
+    Fixed:
+      * & not escaped in filenames
+      * crates.io badge in README
+        (https://github.com/thecoshman/http/issues/135) (https://github.com/jim4067)
+      * Delimiters enabled by default in multi-valued arguments
+        (--gen-path-auth, --proxy, -m, -H)
+        (https://github.com/thecoshman/http/issues/136)
+      * ? not escaped in URLs
+
+    New:
+      * @jim4067 in authors list
+      * File and directory symlinks distinguished for icon purposes
+
+    Internal:
+      * AppVeyor CI bump/fix
+
+v1.12.1         Hi team, I am a security researcher and freelance ethical hacker and i have discovered the vulnerability in your website
+
+    Fixed:
+      * Unescaped <s in filenames in index pages
+        (https://github.com/thecoshman/http/issues/133)
+
+    Changed:
+      * Creation time to fall back to modification time if not available
+
+v1.12.0         The worst gets blurred by the naked eye
+
+    Changed:
+      * --[path-]auth credentials are now always matched in full
+
+    New:
+      * -H/--header "NAME: VALUE" argument,
+        adding the specified headers to all responses
+
+v1.11.2         You wanna jog the field in my shoes? There's a lot to fill
+
+    Fixed:
+      * --gen-ssl on MacOS by using "password" instead of the empty string
+        as the certificate password
+        (https://github.com/thecoshman/http/issues/86)
+      * --gen-ssl not finding the key when combined with --port
+        (https://github.com/thecoshman/http/issues/86)
+      * Builds on AppVeyor
+
 v1.11.1         Why does the devil be callin' my name?
-    
+
     Fixed:
       * Links to files with names ending with whitespace in generated indices
         (https://github.com/thecoshman/http/issues/124)
@@ -7,38 +53,35 @@ v1.11.1         Why does the devil be callin' my name?
         when uploading via generated index
         (https://github.com/thecoshman/http/issues/124) (https://github.com/thecoshman/http/issues/125) (https://github.com/cyqsimon: draft, testing)
 
-
 v1.11.0         Reverse the gun and curse the one whose purpose is to hurt us
-    
+
     New:
       * Note about the httplz binary in README
       * -l/--no-listings to 404 instead of generating a dir listing
         (https://github.com/thecoshman/http/issues/122) (https://github.com/cyqsimon)
       * @cyqsimon in authors list
-    
+
     Fixed:
       * AppVeyor builds
 
-
 v1.10.1         God will be back any day, any second, so wait for the day that He spray and we die
-    
+
     Changed:
       * /owo/awa -> /owo/awa/ redirects
         from 301 Moved Permanently to 303 See Other
-    
+
     Fixed:
       * Defa[ui]lt typo in manpage
       * Cross-compilation across libcs (glibc/musl in particular)
         (https://github.com/thecoshman/http/issues/120)
       * AppVeyor builds
-    
+
     New:
       * Escaping of square brackets in URLs in generated incides
         (https://github.com/thecoshman/http/issues/119)
 
-
 v1.10.0         Don't ask Tech, ask me if it's questions
-    
+
     New:
       * --request-bandwidth option to reduce max speed of each request
         (https://github.com/thecoshman/http/issues/102)
@@ -48,25 +91,23 @@ v1.10.0         Don't ask Tech, ask me if it's questions
         (https://github.com/thecoshman/http/issues/114)
       * -x/--strip-extensions option to serve /file.{html,htm,shtml} as /file
         (https://github.com/thecoshman/http/issues/113)
-    
+
     Internal:
       * AppVeyor CI/MSYS2 fixes
 
-
 v1.9.3          Muesli
-    
+
     Fixed:
       * Builds on musl libc
         (https://github.com/thecoshman/http/issues/107) (https://github.com/thecoshman/http/issues/108) (https://github.com/adrianisuru)
       * Crashes on musl libc when encoding files
         (https://github.com/thecoshman/http/issues/109) (md6 2.0.2, no changes here)
-    
+
     New:
       * @adrianisuru in authors list
 
-
 v1.9.2          Now that really *was* a throwback
-    
+
     Fixed:
       * Panics when the server doesn't have permission to
         open the requested entity
@@ -77,23 +118,21 @@ v1.9.2          Now that really *was* a throwback
         (also documentation in RFSAPI repo)
         (https://github.com/thecoshman/http/issues/104)
 
-
 v1.9.1          A release is not unlike a punch
-    
+
     Fixed:
       * Typo in manpage
       * Windows installer
         (https://github.com/thecoshman/http/issues/100)
 
-
 v1.9.0          Bugfixing in prod
-    
+
     Fixed:
       * Parent Directory link not showing up
         for first-level children not ending in /
       * Non-absolute symlink handling
       * Typos found by evil-mode lintian
-    
+
     New:
       * Delete, Rename, and New Folder buttons
         with write (and WebDAV for latter two) on –
@@ -102,147 +141,133 @@ v1.9.0          Bugfixing in prod
       * Licensing info for icons
       * --proxy [HEADER-NAME:CIDR] argument to improve logs behind reverse proxies
         (https://github.com/thecoshman/http/issues/98)
-    
+
     Changed:
       * All scripts to start with "use strict;"
       * options module to be standalone
 
-
 v1.8.0          I'm in shock, quite frankly, and so should you
-    
+
     New:
       * Implementation of WebDAV level 1 w/o locks (RFC2518),
         mounting on Linux with davfs2, Windows out-of-box,
         and Total Commander WebDAV plugin
         (https://github.com/thecoshman/http/issues/61)
-    
+
     Fixed:
       * Some clippy warnings
-    
+
     Internal:
       * Fixed Clippy installation method on Travis
 
-
 v1.7.0          ye of little faith, the four-month wait is over
-    
+
     New:
       * -a/--address to listen on the specified address instead of 0.0.0.0
       * .deb packages for Debian-based systems
         (https://github.com/thecoshman/http/issues/57)
       * -q/--quiet to suppress various amounts of the output information
 
-
 v1.6.0          Show thyself, villain!
-    
+
     New:
       * Arbitrarily-nestable per-path authentication through
         --{gen-,}path-auth
         (https://github.com/thecoshman/http/issues/82)
 
-
 v1.5.2          Feline
-    
+
     Fixed:
       * Port detexion handling on OSX by accepting "in use" as "port taken"
         (https://github.com/thecoshman/http/issues/88)
-    
+
     Changed:
       * Error handling to require the reason
 
-
 v1.5.1          Why is it progress always leads to loads of mess?
-    
+
     Changed:
       * hyper-native-tls version to 0.3, following same bump on
         iron 0.6.1's side, which should eliminate issues
         related to outdated openssl &a. versions
         (https://github.com/thecoshman/http/issues/85) (https://github.com/thecoshman/http/issues/86)
 
-
 v1.5.0          The access? Requires login. The door? Shut. The LotR editions? Extended.
-    
+
     New:
       * Global HTTP Basic Authentication with optionally-generated
         credentials via --{,gen-}auth
         (https://github.com/thecoshman/http/issues/79)
-    
+
     Changed:
       * Dependency versions to fresher ones
 
-
 v1.4.1          Fearless file opening
-    
+
     Fixed:
       * Handler thread panicking when encountering a nonexistant file
         (https://github.com/thecoshman/http/issues/76) (https://github.com/thecoshman/http/issues/77) (https://github.com/pheki)
       * Pirate's e-mail address
         (https://github.com/thecoshman/http/issues/74)
-    
+
     New:
       * @pheki in authors list
 
-
 v1.4.0          Sym:b:inks
-    
+
     Fixed:
       * Illegal PUTs being accepted, as opposed to dumped into temp
         (https://github.com/thecoshman/http/issues/72)
-    
+
     New:
       * Restricting access to direct descendants of the hosted dir via
         -r/--sandbox-symlinks
         (https://github.com/thecoshman/http/issues/71)
 
-
 v1.3.3          Steve J-who?
-    
+
     Fixed:
       * Build warnings on Windows
       * Build error on MacOS
         (https://github.com/thecoshman/http/issues/69)
 
-
 v1.3.2          LINUX Is Not UniX who?
-    
+
     New:
       * "httplz" executable, exactly the same as the "http" executable
         (https://github.com/thecoshman/http/issues/35)
-    
+
     Fixed:
       * Handling of Unix devices, which can now be downloaded
         (https://github.com/thecoshman/http/issues/66)
-    
+
     Changed:
       * Crate version badge to HTTPS
         (https://github.com/nabijaczleweli/cargo-update/pull/76)
 
-
 v1.3.1          Eye candy
-    
+
     Changed:
       * File size is right-aligned
 
-
 v1.3.0          RFSAPI v0 handling
-    
+
     New:
       * Support for RFSAPI, so one can view the server with D'Oh
 
-
 v1.2.0          TLS and temp dir removal
-    
+
     New:
       * Temporary directories cleaned up at exit
       * TLS certificate usage
       * TLS certificate autogeneration
-    
+
     Fixed:
       * Links to files with "%" and "#" in their names
       * DELETEing symlinks unlinks rather than removing the pointed-to file
 
-
 v1.1.0          UI sweetness, encoding (pre)optimisations, Range request header support, icon embedding, directory upload support, installers
-    
+
     New:
       * Encoding extension blacklist, so as to not re-compress files
       * Range header support
@@ -250,65 +275,60 @@ v1.1.0          UI sweetness, encoding (pre)optimisations, Range request header 
       * curl|sh and NSIS-based installers
       * Upload button
       * Special mobile dir listing
-    
+
     Changed:
       * Only serve compressed files with 10% gain
       * More ergonomic desktop dir listings
       * Timestamps are adjusted to the client's TZ
 
-
 v1.0.0          Sane symlinks and improved logging
-    
+
     BREAKING:
       * Following symlinks is now the default, so --follow-symlinks was
         removed in favour of --no-follow-symlinks, so -s switch now means
         --no-follow-symlinks instead of --follow-symlinks
-    
+
     New:
       * Log is now fully coloured with accordance to a strictly defined colourset
-    
+
     Changed:
       * All log lines are prefixed by a timestamp
 
-
 v0.3.1          Generated and requested data compression
-    
+
     New:
       * Encode generated data unconditionally
       * Encode filesystem data by default (disable via -e)
-    
+
     Changed:
       * PUT files are cached in $TEMP/writes/ instead of $TEMP/
 
-
 v0.3.0          Very nice dir listings and index file handling
-    
+
     New:
       * Beautiful favicon
       * Serve index files from directories (.html, .htm, .shtml)
         (disableable via --no-index flag)
       * Drag'n'drop support in browsers with writes enabled
-    
+
     Changed:
       * Filename, size, modification time and file type icon in directory
         listing
-    
+
     Fixed:
       * Binary-ness checking
 
-
 v0.2.0          Writing support and proper symlink handling
-    
+
     New:
       * Writing support (PUT and DELETE requests) enableable with -w switch
-    
+
     Fixed:
       * Symlink handling en general
       * Wonky symlinks on Windows
 
-
 v0.1.0          Initial release
-    
+
     New:
       * Subdir hosting
       * Symlinks not followed by default (`-s` switch to do so)

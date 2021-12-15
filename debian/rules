@@ -32,7 +32,6 @@ override_dh_auto_install:
 override_dh_auto_clean:
 	rm -rf target/ Cargo.lock http.1
 
-# for tag in $(git tag -l | sort -rV); do git tag -ln1000 "$tag"; echo; echo; done | awk '!/[[:space:]]+\([[:alnum:]]{40}\)$/' | sed -re 's;\([[:alnum:]]{40}\);+;g' -e 's;\(#;(https://github.com/thecoshman/http/issues/;g' -e 's;\(@;(https://github.com/;g' | head -c -2
 override_dh_installchangelogs:
 	dh_installchangelogs debian/changelog.upstream
 

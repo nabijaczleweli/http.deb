@@ -1,0 +1,3 @@
+The upstream changelog is maintained as part of the git repository tags, and can be updated by running
+	for t in $(git tag -l | sort -Vr); do git tag -ln999 $t | sed -E '/^ *\([[:xdigit:]]{40}\)$/d;s/\s*$//'; echo; done | head -n-1 | sed -Ee 's;\(#([[:digit:]]+)\);(https://github.com/thecoshman/http/issues/\1);g' -e 's;\(@([^)]+)\);(https://github.com/\1);g'
+inside an upstream checkout.
