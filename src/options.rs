@@ -27,8 +27,9 @@ use std::fs;
 
 
 lazy_static! {
-    static ref CREDENTIALS_REGEX: Regex = Regex::new("[^:]+(?::[^:]+)?").unwrap();
-    static ref PATH_CREDENTIALS_REGEX: Regex = Regex::new("(.+)=([^:]+(?::[^:]+)?)?").unwrap();
+    static ref CREDENTIALS_REGEX: Regex = Regex::new("^[^:]+(?::[^:]+)?$").unwrap();
+    static ref PATH_CREDENTIALS_REGEX: Regex = Regex::new("^(.+)=([^:]+(?::[^:]+)?)?$").unwrap();
+    static ref HEADER_REGEX: Regex = Regex::new("^([^:]+):[[:space:]]*(.+)$").unwrap();
 }
 
 
@@ -110,6 +111,8 @@ pub struct Options {
     pub mime_type_overrides: BTreeMap<String, Mime>,
     /// Max amount of data per second each request is allowed to return. Default: `None`
     pub request_bandwidth: Option<NonZeroU64>,
+    /// Additional headers to add to every response
+    pub additional_headers: Vec<(String, Vec<u8>)>,
 }
 
 impl Options {
@@ -143,14 +146,20 @@ impl Options {
             .arg(Arg::from_usage("--auth [USERNAME[:PASSWORD]] 'Data for global authentication'").validator(Options::credentials_validator))
             .arg(Arg::from_usage("--gen-auth 'Generate a one-off username:password set for global authentication'").conflicts_with("auth"))
             .arg(Arg::from_usage("--path-auth [PATH=[USERNAME[:PASSWORD]]]... 'Data for authentication under PATH'")
+                .use_delimiter(false)
                 .validator(Options::path_credentials_validator))
-            .arg(Arg::from_usage("--gen-path-auth [PATH]... 'Generate a one-off username:password set for authentication under PATH'"))
+            .arg(Arg::from_usage("--gen-path-auth [PATH]... 'Generate a one-off username:password set for authentication under PATH'").use_delimiter(false))
             .arg(Arg::from_usage("--proxy [HEADER-NAME:CIDR]... 'Treat HEADER-NAME as proxy forwarded-for header when request comes from CIDR'")
+                .use_delimiter(false)
                 .validator(|s| Options::proxy_parse(s.into()).map(|_| ())))
             .arg(Arg::from_usage("-m --mime-type [EXTENSION:MIME-TYPE]... 'Always return MIME-TYPE for files with EXTENSION'")
+                .use_delimiter(false)
                 .validator(|s| Options::mime_type_override_parse(s.into()).map(|_| ())))
             .arg(Arg::from_usage("--request-bandwidth [BYTES] 'Limit each request to returning BYTES per second, or 0 for unlimited. Default: 0'")
                 .validator(|s| Options::bandwidth_parse(s.into()).map(|_| ())))
+            .arg(Arg::from_usage("-H --header [NAME: VALUE]... 'Headers to add to every response'")
+                .use_delimiter(false)
+                .validator(|s| Options::header_parse(&s).map(|_| ())))
             .get_matches();
 
         let dir = matches.value_of("DIR").unwrap_or(".");
@@ -233,6 +242,11 @@ impl Options {
                 .map(Result::unwrap)
                 .collect(),
             request_bandwidth: matches.value_of("request-bandwidth").map(Cow::from).map(Options::bandwidth_parse).map(Result::unwrap).unwrap_or_default(),
+            additional_headers: matches.values_of("header")
+                .unwrap_or_default()
+                .map(Options::header_parse)
+                .map(Result::unwrap)
+                .collect(),
         }
     }
 
@@ -374,5 +388,9 @@ impl Options {
                 Ok((s, mt))
             }
         }
+    }
+
+    fn header_parse(s: &str) -> Result<(String, Vec<u8>), String> {
+        HEADER_REGEX.captures(s).map(|hdr| (hdr[1].to_string(), hdr[2].as_bytes().to_vec())).ok_or_else(|| format!("\"{}\" invalid format", s))
     }
 }

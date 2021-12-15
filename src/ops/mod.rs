@@ -27,7 +27,7 @@ use iron::mime::{Mime, SubLevel as MimeSubLevel, TopLevel as MimeTopLevel};
 use std::io::{self, ErrorKind as IoErrorKind, SeekFrom, Write, Error as IoError, Read, Seek};
 use iron::{headers, status, method, mime, IronResult, Listening, Response, TypeMap, Request, Handler, Iron};
 use self::super::util::{WwwAuthenticate, DisplayThree, CommaList, Spaces, Dav, url_path, file_hash, is_symlink, encode_str, encode_file, file_length,
-                        hash_string, html_response, file_binary, client_mobile, percent_decode, file_icon_suffix, is_actually_file, is_descendant_of,
+                        hash_string, html_response, file_binary, client_mobile, percent_decode, escape_specials, file_icon_suffix, is_actually_file, is_descendant_of,
                         response_encoding, detect_file_as_dir, encoding_extension, file_time_modified, file_time_modified_p, get_raw_fs_metadata,
                         human_readable_size, encode_tail_if_trimmed, is_nonexistent_descendant_of, USER_AGENT, ERROR_HTML, INDEX_EXTENSIONS, MIN_ENCODING_GAIN,
                         MAX_ENCODING_SIZE, MIN_ENCODING_SIZE, DAV_LEVEL_1_METHODS, DIRECTORY_LISTING_HTML, MOBILE_DIRECTORY_LISTING_HTML,
@@ -128,6 +128,7 @@ pub struct HttpHandler {
     pub encoded_temp_dir: Option<(String, PathBuf)>,
     pub proxies: BTreeMap<IpCidr, String>,
     pub mime_type_overrides: BTreeMap<String, Mime>,
+    pub additional_headers: Vec<(String, Vec<u8>)>,
     cache_gen: RwLock<CacheT<Vec<u8>>>,
     cache_fs: RwLock<CacheT<(PathBuf, bool)>>,
 }
@@ -168,6 +169,7 @@ impl HttpHandler {
             cache_fs: Default::default(),
             proxies: opts.proxies.clone(),
             mime_type_overrides: opts.mime_type_overrides.clone(),
+            additional_headers: opts.additional_headers.clone(),
         }
     }
 
@@ -237,6 +239,9 @@ impl Handler for HttpHandler {
         }?;
         if self.webdav {
             resp.headers.set(Dav::LEVEL_1);
+        }
+        for (h, v) in &self.additional_headers {
+            resp.headers.append_raw(h.clone(), v.clone());
         }
         Ok(resp)
     }
@@ -347,7 +352,7 @@ impl HttpHandler {
             return self.handle_nonexistent(req, req_p);
         }
 
-        let is_file = is_actually_file(&req_p.metadata().expect("Failed to get file metadata").file_type());
+        let is_file = is_actually_file(&req_p.metadata().expect("Failed to get file metadata").file_type(), &req_p);
         let range = req.headers.get().map(|r: &headers::Range| (*r).clone());
         let raw_fs = req.headers.get().map(|r: &RawFsApiHeader| r.0).unwrap_or(false);
         if is_file {
@@ -682,7 +687,7 @@ impl HttpHandler {
                     }) || (self.follow_symlinks && self.sandbox_symlinks && symlink && !is_descendant_of(fp, &self.hosted_directory.1)))
                 })
                                                 .map(|f| {
-                    let is_file = is_actually_file(&f.file_type().expect("Failed to get file type"));
+                    let is_file = is_actually_file(&f.file_type().expect("Failed to get file type"), &f.path());
                     if is_file {
                         get_raw_fs_metadata(f.path())
                     } else {
@@ -770,8 +775,7 @@ impl HttpHandler {
                     file_time_modified_p(req_p.parent().expect("Failed to get requested directory's parent directory"))
                         .strftime("%F %T")
                         .unwrap(),
-                    up_path =
-                        slash_idx.map(|i| &rel_noslash[0..i]).unwrap_or("").replace('%', "%25").replace('#', "%23").replace('[', "%5B").replace(']', "%5D"),
+                    up_path = escape_specials(slash_idx.map(|i| &rel_noslash[0..i]).unwrap_or("")),
                     up_path_slash = if slash_idx.is_some() { "/" } else { "" })
         };
         let list_s = req_p.read_dir()
@@ -787,13 +791,13 @@ impl HttpHandler {
                 }) || (self.follow_symlinks && self.sandbox_symlinks && symlink && !is_descendant_of(fp, &self.hosted_directory.1)))
             })
             .sorted_by(|lhs, rhs| {
-                (is_actually_file(&lhs.file_type().expect("Failed to get file type")),
+                (is_actually_file(&lhs.file_type().expect("Failed to get file type"), &lhs.path()),
                  lhs.file_name().to_str().expect("Failed to get file name").to_lowercase())
-                    .cmp(&(is_actually_file(&rhs.file_type().expect("Failed to get file type")),
+                    .cmp(&(is_actually_file(&rhs.file_type().expect("Failed to get file type"), &rhs.path()),
                            rhs.file_name().to_str().expect("Failed to get file name").to_lowercase()))
             })
             .fold("".to_string(), |cur, f| {
-                let is_file = is_actually_file(&f.file_type().expect("Failed to get file type"));
+                let is_file = is_actually_file(&f.file_type().expect("Failed to get file type"), &f.path());
                 let fmeta = f.metadata().expect("Failed to get requested file metadata");
                 let fname = f.file_name().into_string().expect("Failed to get file name");
                 let path = f.path();
@@ -804,7 +808,7 @@ impl HttpHandler {
                         if is_file { "file" } else { "dir" },
                         file_icon_suffix(&path, is_file),
                         path.file_name().map(|p| p.to_str().expect("Filename not UTF-8").replace('.', "_")).as_ref().unwrap_or(&fname),
-                        fname,
+                        fname.replace('&', "&amp;").replace('<', "&lt;"),
                         if is_file { "" } else { "/" },
                         if show_file_management_controls {
                             DisplayThree("<span class=\"manage\"><span class=\"delete_file_icon\">Delete</span>",
@@ -823,8 +827,8 @@ impl HttpHandler {
                         } else {
                             DisplayThree("", String::new(), "")
                         },
-                        path = format!("/{}", relpath).replace("//", "/").replace('%', "%25").replace('#', "%23").replace('[', "%5B").replace(']', "%5D"),
-                        fname = encode_tail_if_trimmed(fname.replace('%', "%25").replace('#', "%23").replace('[', "%5B").replace(']', "%5D")))
+                        path = escape_specials(format!("/{}", relpath).replace("//", "/")),
+                        fname = encode_tail_if_trimmed(escape_specials(&fname)))
             });
 
         self.handle_generated_response_encoding(req,
@@ -874,8 +878,7 @@ impl HttpHandler {
                          <td><a href=\"/{up_path}{up_path_slash}\">&nbsp;</a></td> \
                          <td><a href=\"/{up_path}{up_path_slash}\">&nbsp;</a></td></tr>",
                     file_time_modified_p(req_p.parent().expect("Failed to get requested directory's parent directory")).strftime("%F %T").unwrap(),
-                    up_path =
-                        slash_idx.map(|i| &rel_noslash[0..i]).unwrap_or("").replace('%', "%25").replace('#', "%23").replace('[', "%5B").replace(']', "%5D"),
+                    up_path = escape_specials(slash_idx.map(|i| &rel_noslash[0..i]).unwrap_or("")),
                     up_path_slash = if slash_idx.is_some() { "/" } else { "" })
         };
 
@@ -895,13 +898,13 @@ impl HttpHandler {
                 }) || (self.follow_symlinks && self.sandbox_symlinks && symlink && !is_descendant_of(fp, &self.hosted_directory.1)))
             })
             .sorted_by(|lhs, rhs| {
-                (is_actually_file(&lhs.file_type().expect("Failed to get file type")),
+                (is_actually_file(&lhs.file_type().expect("Failed to get file type"), &lhs.path()),
                  lhs.file_name().to_str().expect("Failed to get file name").to_lowercase())
-                    .cmp(&(is_actually_file(&rhs.file_type().expect("Failed to get file type")),
+                    .cmp(&(is_actually_file(&rhs.file_type().expect("Failed to get file type"), &rhs.path()),
                            rhs.file_name().to_str().expect("Failed to get file name").to_lowercase()))
             })
             .fold("".to_string(), |cur, f| {
-                let is_file = is_actually_file(&f.file_type().expect("Failed to get file type"));
+                let is_file = is_actually_file(&f.file_type().expect("Failed to get file type"), &f.path());
                 let fmeta = f.metadata().expect("Failed to get requested file metadata");
                 let fname = f.file_name().into_string().expect("Failed to get file name");
                 let path = f.path();
@@ -914,7 +917,7 @@ impl HttpHandler {
                         path.file_name().map(|p| p.to_str().expect("Filename not UTF-8").replace('.', "_")).as_ref().unwrap_or(&fname),
                         if is_file { "file" } else { "dir" },
                         file_icon_suffix(&path, is_file),
-                        fname,
+                        fname.replace('&', "&amp;").replace('<', "&lt;"),
                         if is_file { "" } else { "/" },
                         file_time_modified(&fmeta).strftime("%F %T").unwrap(),
                         if is_file {
@@ -939,8 +942,8 @@ impl HttpHandler {
                         } else {
                             DisplayThree("", "", "")
                         },
-                        path = format!("/{}", relpath).replace("//", "/").replace('%', "%25").replace('#', "%23").replace('[', "%5B").replace(']', "%5D"),
-                        fname = encode_tail_if_trimmed(fname.replace('%', "%25").replace('#', "%23").replace('[', "%5B").replace(']', "%5D")))
+                        path = escape_specials(format!("/{}", relpath).replace("//", "/")),
+                        fname = encode_tail_if_trimmed(escape_specials(&fname)))
             });
 
         self.handle_generated_response_encoding(req,
@@ -1111,10 +1114,11 @@ impl HttpHandler {
 
     fn handle_delete_path(&self, req: &mut Request, req_p: PathBuf, symlink: bool) -> IronResult<Response> {
         let ft = req_p.metadata().expect("failed to get file metadata").file_type();
+        let is_file = is_actually_file(&ft, &req_p);
         log!(self.log,
              "{} deleted {blue}{} {magenta}{}{reset}",
              self.remote_addresses(&req),
-             if is_actually_file(&ft) {
+             if is_file {
                  "file"
              } else if symlink {
                  "symlink"
@@ -1123,7 +1127,7 @@ impl HttpHandler {
              },
              req_p.display());
 
-        if is_actually_file(&ft) {
+        if is_file {
             fs::remove_file(req_p).expect("Failed to remove requested file");
         } else {
             fs::remove_dir_all(req_p).expect(if symlink {
@@ -1346,6 +1350,7 @@ impl Clone for HttpHandler {
             encoded_temp_dir: self.encoded_temp_dir.clone(),
             proxies: self.proxies.clone(),
             mime_type_overrides: self.mime_type_overrides.clone(),
+            additional_headers: self.additional_headers.clone(),
             cache_gen: Default::default(),
             cache_fs: Default::default(),
         }
@@ -1513,20 +1518,40 @@ pub fn generate_tls_data(temp_dir: &(String, PathBuf)) -> Result<((String, PathB
         return Err(exit_err(true, &mut child, &es));
     }
 
-    let mut child =
-        Command::new("openssl").args(&["pkcs12", "-export", "-out", "tls.p12", "-inkey", "tls.key", "-in", "tls.crt", "-passin", "pass:", "-passout", "pass:"])
-            .current_dir(&tls_dir)
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .map_err(|error| err(false, "spawn", error.to_string()))?;
+    let mut child = Command::new("openssl").args(&["pkcs12",
+                "-export",
+                "-out",
+                "tls.p12",
+                "-inkey",
+                "tls.key",
+                "-in",
+                "tls.crt",
+                "-passin",
+                "pass:",
+                "-passout",
+                if cfg!(target_os = "macos") {
+                    "pass:password"
+                } else {
+                    "pass:"
+                }])
+        .current_dir(&tls_dir)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|error| err(false, "spawn", error.to_string()))?;
     let es = child.wait().map_err(|error| err(false, "wait", error.to_string()))?;
     if !es.success() {
         return Err(exit_err(false, &mut child, &es));
     }
 
-    Ok(((format!("{}/tls/tls.p12", temp_dir.0), tls_dir.join("tls.p12")), String::new()))
+    Ok(((format!("{}/tls/tls.p12", temp_dir.0), tls_dir.join("tls.p12")),
+        if cfg!(target_os = "macos") {
+                "password"
+            } else {
+                ""
+            }
+            .to_string()))
 }
 
 /// Generate random username:password auth credentials.
