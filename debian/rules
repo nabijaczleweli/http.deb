@@ -2,10 +2,8 @@
 
 
 CARGO ?= cargo
-GEM ?= gem
 
 OUTDIR = $(CURDIR)/debian/http/
-VERSION = $(shell awk '/^version/ {print $$3; exit}' Cargo.toml | sed 's/"//g')
 
 
 override_dh_auto_build:
