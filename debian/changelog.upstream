@@ -1,3 +1,22 @@
+v1.12.3         He even came with his chains! And his crown! King of the ring! I can't believe it arrived early!
+
+    Changed:
+      * Brotli backend from brotli2 to brotli
+        (https://github.com/thecoshman/http/issues/140)
+      * Cache hashing algorithm from MD6 to BLAKE3
+        (https://github.com/thecoshman/http/issues/144)
+
+    Fixed:
+      * Stray rawgit link in AppVeyor job
+      * Handling of non-root directories pointing to filesystem roots
+
+    New:
+      * @cyqsimon's AUR package note in README
+        (https://github.com/thecoshman/http/issues/142)
+
+    Internal:
+      * statics replaced with consts
+
 v1.12.2         Done up and fixed on
 
     Fixed:
