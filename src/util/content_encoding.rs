@@ -1,16 +1,16 @@
-use brotli2::{CompressMode as BrotliCompressMode, CompressParams as BrotliCompressParams};
+use brotli::enc::backward_references::{BrotliEncoderParams, BrotliEncoderMode};
+use brotli::enc::BrotliCompress as brotli_compress;
 use flate2::write::{DeflateEncoder, GzEncoder};
 use flate2::Compression as Flate2Compression;
 use iron::headers::{QualityItem, Encoding};
 use bzip2::Compression as BzCompression;
-use brotli2::write::BrotliEncoder;
 use std::collections::BTreeSet;
 use bzip2::write::BzEncoder;
 use std::io::{self, Write};
 use unicase::UniCase;
 use std::path::Path;
 use std::fs::File;
-use md6::Md6;
+use blake3;
 
 
 lazy_static! {
@@ -25,16 +25,21 @@ lazy_static! {
         let raw = include_str!("../../assets/encoding_blacklist");
         raw.split('\n').map(str::trim).filter(|s| !s.is_empty() && !s.starts_with('#')).map(UniCase::new).collect()
     };
+
+    pub static ref BROTLI_PARAMS: BrotliEncoderParams = BrotliEncoderParams {
+        mode: BrotliEncoderMode::BROTLI_MODE_TEXT,
+        ..Default::default()
+    };
 }
 
 /// The minimal size at which to encode filesystem files.
-pub static MIN_ENCODING_SIZE: u64 = 1024;
+pub const MIN_ENCODING_SIZE: u64 = 1024;
 
 /// The maximal size at which to encode filesystem files.
-pub static MAX_ENCODING_SIZE: u64 = 100 * 1024 * 1024;
+pub const MAX_ENCODING_SIZE: u64 = 100 * 1024 * 1024;
 
 /// The minimal size gain at which to preserve encoded filesystem files.
-pub static MIN_ENCODING_GAIN: f64 = 1.1;
+pub const MIN_ENCODING_GAIN: f64 = 1.1;
 
 
 /// Find best supported encoding to use, or `None` for identity.
@@ -46,7 +51,7 @@ pub fn response_encoding(requested: &mut [QualityItem<Encoding>]) -> Option<Enco
 /// Encode a string slice using a specified encoding or `None` if encoding failed or is not recognised.
 pub fn encode_str(dt: &str, enc: &Encoding) -> Option<Vec<u8>> {
     type EncodeT = fn(&str) -> Option<Vec<u8>>;
-    static STR_ENCODING_FNS: &[EncodeT] = &[encode_str_gzip, encode_str_deflate, encode_str_brotli, encode_str_bzip2];
+    const STR_ENCODING_FNS: &[EncodeT] = &[encode_str_gzip, encode_str_deflate, encode_str_brotli, encode_str_bzip2];
 
     encoding_idx(enc).and_then(|fi| STR_ENCODING_FNS[fi](dt))
 }
@@ -55,7 +60,7 @@ pub fn encode_str(dt: &str, enc: &Encoding) -> Option<Vec<u8>> {
 /// `false` if encoding failed, is not recognised or an I/O error occurred.
 pub fn encode_file(p: &Path, op: &Path, enc: &Encoding) -> bool {
     type EncodeT = fn(File, File) -> bool;
-    static FILE_ENCODING_FNS: &[EncodeT] = &[encode_file_gzip, encode_file_deflate, encode_file_brotli, encode_file_bzip2];
+    const FILE_ENCODING_FNS: &[EncodeT] = &[encode_file_gzip, encode_file_deflate, encode_file_brotli, encode_file_bzip2];
 
     encoding_idx(enc)
         .map(|fi| {
@@ -69,39 +74,16 @@ pub fn encode_file(p: &Path, op: &Path, enc: &Encoding) -> bool {
 
 /// Encoding extension to use for encoded files, for example "gz" for gzip, or `None` if the encoding is not recognised.
 pub fn encoding_extension(enc: &Encoding) -> Option<&'static str> {
-    static ENCODING_EXTS: &[&str] = &["gz", "dflt", "br", "bz2"];
+    const ENCODING_EXTS: &[&str] = &["gz", "dflt", "br", "bz2"];
 
     encoding_idx(enc).map(|ei| ENCODING_EXTS[ei])
 }
 
-/// Return the 256-bit MD6 hash of the file denoted by the specified path.
-pub fn file_hash(p: &Path) -> [u8; 32] {
-    let mut ctx = Md6::new(256).unwrap();
-    let mut res = [0; 32];
-
+/// Return the 256-bit BLAKE3 hash of the file denoted by the specified path.
+pub fn file_hash(p: &Path) -> blake3::Hash {
+    let mut ctx = blake3::Hasher::new();
     io::copy(&mut File::open(p).unwrap(), &mut ctx).unwrap();
-    ctx.finalise(&mut res);
-
-    res
-}
-
-/// Create a hash string out of its raw bytes.
-///
-/// # Examples
-///
-/// ```
-/// use https::util::hash_string;
-/// assert_eq!(hash_string(&[0x99, 0xAA, 0xBB, 0xCC]), "99AABBCC".to_string());
-/// assert_eq!(hash_string(&[0x09, 0x0A]), "090A".to_string());
-/// ```
-pub fn hash_string(bytes: &[u8]) -> String {
-    use std::fmt::Write;
-
-    let mut result = String::with_capacity(bytes.len() * 2);
-    for b in bytes {
-        write!(result, "{:02X}", b).unwrap();
-    }
-    result
+    ctx.finalize()
 }
 
 
@@ -142,9 +124,13 @@ macro_rules! encode_fn {
 
 encode_fn!(encode_str_gzip, encode_file_gzip, GzEncoder, Flate2Compression::default());
 encode_fn!(encode_str_deflate, encode_file_deflate, DeflateEncoder, Flate2Compression::default());
-encode_fn!(encode_str_brotli,
-           encode_file_brotli,
-           BrotliEncoder,
-           0,
-           |into| BrotliEncoder::from_params(into, BrotliCompressParams::new().mode(BrotliCompressMode::Text)));
 encode_fn!(encode_str_bzip2, encode_file_bzip2, BzEncoder, BzCompression::Default);
+
+fn encode_str_brotli(dt: &str) -> Option<Vec<u8>> {
+    let mut ret = Vec::new();
+    brotli_compress(&mut dt.as_bytes(), &mut ret, &BROTLI_PARAMS).ok().map(|_| ret)
+}
+
+fn encode_file_brotli(mut inf: File, mut outf: File) -> bool {
+    brotli_compress(&mut inf, &mut outf, &BROTLI_PARAMS).is_ok()
+}
