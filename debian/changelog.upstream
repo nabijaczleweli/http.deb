@@ -1,3 +1,8 @@
+v1.12.4         Не вбивала, щоб творила
+
+    New:
+      * Symlink depth limited to 40
+
 v1.12.3         He even came with his chains! And his crown! King of the ring! I can't believe it arrived early!
 
     Changed:
