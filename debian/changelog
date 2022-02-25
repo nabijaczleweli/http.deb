@@ -1,3 +1,10 @@
+http (1.12.4-1) unstable; urgency=medium
+
+  * New upstream version 1.12.4
+  * Update upstream changelog
+
+ -- наб <nabijaczleweli@nabijaczleweli.xyz>  Fri, 25 Feb 2022 22:44:55 +0100
+
 http (1.12.3-1) unstable; urgency=medium
 
   * New upstream version 1.12.3
