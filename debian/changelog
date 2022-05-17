@@ -1,3 +1,11 @@
+http (1.12.5-1) unstable; urgency=medium
+
+  * Remove needless cat in d/rules
+  * New upstream version 1.12.5
+  * Update upstream changelog
+
+ -- наб <nabijaczleweli@nabijaczleweli.xyz>  Tue, 17 May 2022 21:47:48 +0200
+
 http (1.12.4-1) unstable; urgency=medium
 
   * New upstream version 1.12.4
