@@ -1,3 +1,16 @@
+v1.12.5         The tv_nsec member shall be of an implementation-defined signed integer type
+
+    Fixed:
+      * Unopenable compressible files returning a 0-length response
+        instead of a 403
+
+    Changed:
+      * Explicitly mention openssl(1) is used for --gen-ssl
+        (https://github.com/thecoshman/http/issues/146)
+
+    Internal:
+      * Fixed AppVeyor builds
+
 v1.12.4         Не вбивала, щоб творила
 
     New:
