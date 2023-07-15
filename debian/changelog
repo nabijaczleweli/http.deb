@@ -1,9 +1,17 @@
+http (1.13.0-1) unstable; urgency=medium
+
+  * Fix d/watch for new github
+  * New upstream version 1.13.0
+  * Rebase patches
+  * Update upstream changelog
+
+ -- наб <nabijaczleweli@nabijaczleweli.xyz>  Sat, 15 Jul 2023 19:19:13 +0200
+
 http (1.12.5-1) unstable; urgency=medium
 
   * Remove needless cat in d/rules
   * New upstream version 1.12.5
   * Update upstream changelog
-  * Rebase patches
 
  -- наб <nabijaczleweli@nabijaczleweli.xyz>  Tue, 17 May 2022 21:47:48 +0200
 
