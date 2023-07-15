@@ -107,6 +107,8 @@ pub struct Options {
     pub generate_path_auth: BTreeSet<String>,
     /// Header names and who we trust them from in `HEADER-NAME:CIDR` format
     pub proxies: BTreeMap<IpCidr, String>,
+    /// Header names and who we trust them from in `HEADER-NAME:CIDR` format
+    pub proxy_redirs: BTreeMap<IpCidr, String>,
     /// Extension -> MIME type mapping overrides; empty string for no extension
     pub mime_type_overrides: BTreeMap<String, Mime>,
     /// Max amount of data per second each request is allowed to return. Default: `None`
@@ -136,7 +138,7 @@ impl Options {
             .arg(Arg::from_usage("-l --no-listings 'Never generate dir listings. Default: false'"))
             .arg(Arg::from_usage("-i --no-indices 'Do not automatically use index files. Default: false'"))
             .arg(Arg::from_usage("-e --no-encode 'Do not encode filesystem files. Default: false'"))
-            .arg(Arg::from_usage("-x --strip-extensions 'Allow stripping index extentions from served paths. Default: false'"))
+            .arg(Arg::from_usage("-x --strip-extensions 'Allow stripping index extensions from served paths. Default: false'"))
             .arg(Arg::from_usage("-q --quiet... 'Suppress increasing amounts of output'"))
             .arg(Arg::from_usage("-c --no-colour 'Don't colourise the log output'"))
             .arg(Arg::from_usage("-d --webdav 'Handle WebDAV requests. Default: false'"))
@@ -150,6 +152,9 @@ impl Options {
                 .validator(Options::path_credentials_validator))
             .arg(Arg::from_usage("--gen-path-auth [PATH]... 'Generate a one-off username:password set for authentication under PATH'").use_delimiter(false))
             .arg(Arg::from_usage("--proxy [HEADER-NAME:CIDR]... 'Treat HEADER-NAME as proxy forwarded-for header when request comes from CIDR'")
+                .use_delimiter(false)
+                .validator(|s| Options::proxy_parse(s.into()).map(|_| ())))
+            .arg(Arg::from_usage("--proxy-redir [HEADER-NAME:CIDR]... 'Treat HEADER-NAME as proxy X-Original-URL header for redirects when request comes from CIDR'")
                 .use_delimiter(false)
                 .validator(|s| Options::proxy_parse(s.into()).map(|_| ())))
             .arg(Arg::from_usage("-m --mime-type [EXTENSION:MIME-TYPE]... 'Always return MIME-TYPE for files with EXTENSION'")
@@ -235,6 +240,7 @@ impl Options {
             path_auth_data: path_auth_data,
             generate_path_auth: generate_path_auth,
             proxies: matches.values_of("proxy").unwrap_or_default().map(Cow::from).map(Options::proxy_parse).map(Result::unwrap).collect(),
+            proxy_redirs: matches.values_of("proxy-redir").unwrap_or_default().map(Cow::from).map(Options::proxy_parse).map(Result::unwrap).collect(),
             mime_type_overrides: matches.values_of("mime-type")
                 .unwrap_or_default()
                 .map(Cow::from)
