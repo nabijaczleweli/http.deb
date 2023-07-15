@@ -146,6 +146,10 @@ fn result_main() -> Result<(), Error> {
             for (network, header) in &opts.proxies {
                 writeln!(out, "{}\t{}", header, network).unwrap();
             }
+            writeln!(out, "URL Header\tNetwork").unwrap();
+            for (network, header) in &opts.proxy_redirs {
+                writeln!(out, "{}\t{}", header, network).unwrap();
+            }
             out.flush().unwrap();
         }
     }
@@ -181,8 +185,7 @@ fn result_main() -> Result<(), Error> {
             move || r.notify_one()
         })
         .unwrap();
-    let mx = Mutex::new(());
-    let _ = end_handler.wait(mx.lock().unwrap()).unwrap();
+    drop(end_handler.wait(Mutex::new(()).lock().unwrap()).unwrap());
     responder.close().unwrap();
 
     // This is necessary because the server isn't Drop::drop()ped when the responder is

@@ -126,6 +126,15 @@ pass parameters like what port to use.
 
     Can be specified any amount of times. Default: none.
 
+  --proxy-redir [HEADER-NAME:CIDR]
+
+    Treat HEADER-NAME as a proxy X-Original-URL header when the request
+    originates from an address inside the network specified by the CIDR:
+    this used only for 302 See Other Location: headers when redirecting
+    due to an index file.
+
+    Can be specified any amount of times. Default: none.
+
   -m --mime-type [EXTENSION:MIME-TYPE]
 
     Return MIME-TYPE for files with EXTENSION.
@@ -148,7 +157,7 @@ pass parameters like what port to use.
 
   -H --header [NAME: VALUE]...
 
-    Add the specified headers to all resposes.
+    Add the specified headers to all responses.
 
     VALUE is left-trimmed.
 
@@ -207,7 +216,7 @@ pass parameters like what port to use.
 
   -x --strip-extensions
 
-    Allow stripping index extentions from served paths:
+    Allow stripping index extensions from served paths:
     a request to /file might get served by /file.[s]htm[l].
 
     This is false by default
@@ -411,16 +420,19 @@ pass parameters like what port to use.
     Example output change:
       127.0.0.1:47916 requested to GET nonexistent entity S:\Rust-target\doc\main.css
 
-  `http --proxy X-Forwarded-For:127.0.0.1 --proxy X-Proxied-For:192.168.1.0/24`
+  `http --proxy X-Forwarded-For:127.0.0.1 --proxy X-Proxied-For:192.168.1.0/24 --proxy-redir X-Original-URL:127.0.0.1`
 
     As in the first example, but treat the X-Forwarded-For and X-Proxied-For
     as proxy headers for requests from localhost and the 192.168.1.0/24 network,
     respectively.
 
+    When redirecting, trust 127.0.0.1 to know how to redirect.
+
     Given, that requests from 127.0.0.1, 192.168.1.109, and 93.184.216.34
     have the following headers set:
       X-Forwarded-For: OwO
       X-Proxied-For: UwU
+      X-Original-URL: https://reversely.proxied/jpegs
 
     Then the output will be as follows:
       Hosting "." on port 8000 without TLS and no authentication...
@@ -433,6 +445,7 @@ pass parameters like what port to use.
       [2020-02-17 17:48:41] 127.0.0.1:1392 for OwO was served directory listing for \\?\P:\Rust\http
       [2020-02-17 17:49:12] 192.168.1.109:1403 for UwU was served directory listing for \\?\P:\Rust\http
       [2020-02-17 17:49:29] 93.184.216.34:1397 was served directory listing for \\?\P:\Rust\http
+      [2020-02-17 17:48:41] Redirecting 127.0.0.1:1393 for OwO to https://reversely.proxied/jpegs/ - found index file index.html
 
   `http --mime-type css:text/css;charset=utf-8 --mime-type :image/jpeg`
 
@@ -464,7 +477,10 @@ Written by thecoshman &lt;<rust@thecoshman.com>&gt;,
            pheki,
            Adrian Herath &lt;<adrianisuru@gmail.com>&gt;,
            cyqsimon,
-       and jim4067.
+           jim4067,
+           Orhun Parmaksız &lt;<orhunparmaksiz@gmail.com>&gt;,
+           Kian-Meng Ang &lt;<kianmeng@cpan.org>&gt;,
+       and Theodore Ni.
 
 ## REPORTING BUGS
 
