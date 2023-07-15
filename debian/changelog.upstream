@@ -1,3 +1,35 @@
+v1.13.0         http regency arc
+
+    Fixed:
+      * When redirecting for index, requests for /zupa?whatever
+        being redirected to /zupa?whatever/ ad infinitum instead of /zupa/?whatever
+
+    New:
+      * --proxy-redir HEADER-NAME:CIDR, à la --proxy,
+        but used for trusting X-Original-URL:-style headers
+        when picking the URL to redirect to for index files
+        when behind a reverse proxy
+
+v1.12.6         http interregnum arc
+
+    Changed:
+      * Arch install instruxions
+        (https://github.com/thecoshman/http/issues/148) (https://github.com/orhun)
+      * bzip2 dependency to 0.4
+
+    Fixed:
+      * Code and documentation typos
+        (https://github.com/thecoshman/http/issues/150) (https://github.com/kianmeng)
+      * Warnings on rustc 1.65/hard errors on 1.68
+        for unchanged correct code
+        (https://github.com/thecoshman/http/issues/151) (https://github.com/tjni)
+
+    New:
+      * @orhun, @kianmeng, and @tjni in authors list
+
+    Internal:
+      * AppVeyor builds fixed
+
 v1.12.5         The tv_nsec member shall be of an implementation-defined signed integer type
 
     Fixed:
