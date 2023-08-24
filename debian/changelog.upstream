@@ -1,3 +1,9 @@
+v1.13.1         This release sponsored by Chlew Poprzedni sp. z o.o.
+
+    New:
+      * Indices and error have <meta name="color-scheme" content="light dark">
+      * Error has mobile-adaptive scaling like the mobile-listing
+
 v1.13.0         http regency arc
 
     Fixed:
