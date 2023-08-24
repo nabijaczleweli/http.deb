@@ -27,6 +27,9 @@ override_dh_auto_install:
 	# https://fishshell.com/docs/current/#where-to-put-completions
 	cp $(wildcard target/completions/*.fish) $(OUTDIR)usr/share/fish/vendor_completions.d/
 
+override_dh_dwz:
+	# https://101010.pl/@nabijaczleweli/110944972179495353
+
 override_dh_auto_clean:
 	rm -rf target/ Cargo.lock http.1
 
