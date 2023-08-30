@@ -10,7 +10,7 @@ Subject: Add binary for generating shell completion files
  create mode 100644 src/http-build-completions.rs
 
 diff --git a/Cargo.toml b/Cargo.toml
-index e0e6c9e..b62aa31 100644
+index 80da6f7..4e31447 100644
 --- a/Cargo.toml
 +++ b/Cargo.toml
 @@ -85,6 +85,12 @@ path = "src/main.rs"
@@ -56,7 +56,7 @@ index 0000000..c5614e1
 +    }
 +}
 diff --git a/src/options.rs b/src/options.rs
-index f2c553e..4f5a562 100644
+index 60559fd..0b13118 100644
 --- a/src/options.rs
 +++ b/src/options.rs
 @@ -118,9 +118,8 @@ pub struct Options {
@@ -71,8 +71,8 @@ index f2c553e..4f5a562 100644
              .version(crate_version!())
              .author(crate_authors!("\n"))
              .about(crate_description!())
-@@ -165,6 +164,11 @@ impl Options {
-             .arg(Arg::from_usage("-H --header [NAME: VALUE]... 'Headers to add to every response'")
+@@ -173,6 +172,11 @@ impl Options {
+                 .number_of_values(1)
                  .use_delimiter(false)
                  .validator(|s| Options::header_parse(&s).map(|_| ())))
 +    }
