@@ -1,3 +1,10 @@
+v1.13.2         God save the quing
+
+    Fixed:
+      * Specifiable-multiple-times flags-with-arguments (--gen-path-auth, &c.)
+        completely breaking argument parsing, now compliant with XCU USG
+      * See Other misdocumented as 302 (it's 303) in manual
+
 v1.13.1         This release sponsored by Chlew Poprzedni sp. z o.o.
 
     New:
