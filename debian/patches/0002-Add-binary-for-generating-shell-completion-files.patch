@@ -4,16 +4,16 @@ Subject: Add binary for generating shell completion files
 
 ---
  Cargo.toml                    |  6 ++++++
- src/http-build-completions.rs | 23 +++++++++++++++++++++++
+ src/http-build-completions.rs | 21 +++++++++++++++++++++
  src/options.rs                | 10 +++++++---
- 3 files changed, 36 insertions(+), 3 deletions(-)
+ 3 files changed, 34 insertions(+), 3 deletions(-)
  create mode 100644 src/http-build-completions.rs
 
 diff --git a/Cargo.toml b/Cargo.toml
-index 80da6f7..4e31447 100644
+index 212aa77..9239cc1 100644
 --- a/Cargo.toml
 +++ b/Cargo.toml
-@@ -85,6 +85,12 @@ path = "src/main.rs"
+@@ -82,6 +82,12 @@ path = "src/main.rs"
  test = false
  doc = false
  
@@ -28,13 +28,11 @@ index 80da6f7..4e31447 100644
  name = "http"
 diff --git a/src/http-build-completions.rs b/src/http-build-completions.rs
 new file mode 100644
-index 0000000..c5614e1
+index 0000000..67cdbb2
 --- /dev/null
 +++ b/src/http-build-completions.rs
-@@ -0,0 +1,23 @@
-+#[macro_use]
-+extern crate lazy_static;
-+extern crate regex;
+@@ -0,0 +1,21 @@
++extern crate blake3;
 +extern crate cidr;
 +#[macro_use]
 +extern crate clap;
@@ -56,10 +54,10 @@ index 0000000..c5614e1
 +    }
 +}
 diff --git a/src/options.rs b/src/options.rs
-index 60559fd..0b13118 100644
+index 8f5440f..68c9508 100644
 --- a/src/options.rs
 +++ b/src/options.rs
-@@ -118,9 +118,8 @@ pub struct Options {
+@@ -120,9 +120,8 @@ pub struct Options {
  }
  
  impl Options {
@@ -71,7 +69,7 @@ index 60559fd..0b13118 100644
              .version(crate_version!())
              .author(crate_authors!("\n"))
              .about(crate_description!())
-@@ -173,6 +172,11 @@ impl Options {
+@@ -182,6 +181,11 @@ impl Options {
                  .number_of_values(1)
                  .use_delimiter(false)
                  .validator(|s| Options::header_parse(&s).map(|_| ())))
