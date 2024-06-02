@@ -6,11 +6,12 @@
 //! https://tools.ietf.org/html/rfc2518
 
 
-use self::super::super::util::{BorrowXmlName, Destination, CommaList, Overwrite, Depth, win32_file_attributes, file_time_accessed, file_time_modified,
-                               file_time_created, client_microsoft, is_actually_file, is_descendant_of, file_executable, html_response, file_length, copy_dir,
-                               WEBDAV_ALLPROP_PROPERTIES_NON_WINDOWS, WEBDAV_ALLPROP_PROPERTIES_WINDOWS, WEBDAV_XML_NAMESPACE_MICROSOFT,
-                               WEBDAV_XML_NAMESPACE_APACHE, WEBDAV_PROPNAME_PROPERTIES, WEBDAV_XML_NAMESPACE_DAV, WEBDAV_XML_NAMESPACES, MAX_SYMLINKS,
-                               ERROR_HTML};
+use self::super::super::util::{BorrowXmlName, Destination, DisplayThree, CommaList, Overwrite, Depth, win32_file_attributes, file_time_accessed,
+                               file_time_modified, file_time_created, client_microsoft, is_actually_file, is_descendant_of, file_executable, set_executable,
+                               error_html, file_length, set_times, copy_dir, WEBDAV_ALLPROP_PROPERTIES_NON_WINDOWS, WEBDAV_ALLPROP_PROPERTIES_WINDOWS,
+                               WEBDAV_XML_NAMESPACE_MICROSOFT, WEBDAV_XML_NAMESPACE_APACHE, WEBDAV_PROPNAME_PROPERTIES, WEBDAV_XML_NAMESPACE_DAV,
+                               WEBDAV_XML_NAMESPACES, MAX_SYMLINKS};
+use iron::mime::{Mime, Attr as MimeAttr, Value as MimeAttrValue, SubLevel as MimeSubLevel, TopLevel as MimeTopLevel};
 use std::io::{ErrorKind as IoErrorKind, Result as IoResult, Error as IoError, Write, Read};
 use xml::reader::{EventReader as XmlReader, XmlEvent as XmlREvent, Error as XmlRError};
 use xml::writer::{EventWriter as XmlWriter, XmlEvent as XmlWEvent, Error as XmlWError};
@@ -24,14 +25,21 @@ use std::path::{PathBuf, Path};
 use std::fs::{self, Metadata};
 use self::super::HttpHandler;
 use itertools::Itertools;
-use std::borrow::Borrow;
-use iron::mime::Mime;
-use std::fmt;
+use std::{fmt, mem};
+use time::strptime;
 
 
-lazy_static! {
-    static ref DEFAULT_XML_PARSER_CONFIG: XmlParserConfig = XmlParserConfig { trim_whitespace: true, ..Default::default() };
-    static ref DEFAULT_XML_EMITTER_CONFIG: XmlEmitterConfig = XmlEmitterConfig { perform_indent: cfg!(debug_assertions), ..Default::default() };
+/// This should be a pub const but the default/new function isn't const
+fn default_xml_parser_config() -> XmlParserConfig {
+    XmlParserConfig {
+        trim_whitespace: true,
+        whitespace_to_characters: true,
+        ..Default::default()
+    }
+}
+/// This should be a pub const but the default/new function isn't const
+fn default_xml_emitter_config() -> XmlEmitterConfig {
+    XmlEmitterConfig { perform_indent: cfg!(debug_assertions), ..Default::default() }
 }
 
 
@@ -70,8 +78,8 @@ impl HttpHandler {
                              self.remote_addresses(&req),
                              req_p.display());
                         return self.handle_generated_response_encoding(req,
-                                                                       status::BadRequest,
-                                                                       html_response(ERROR_HTML, &["400 Bad Request", &format!("Invalid XML: {}", e), ""]));
+                                                                           status::BadRequest,
+                                                                           error_html("400 Bad Request", format_args!("Invalid XML: {}", e), ""));
                     }
                     Err(props) => props,
                 }
@@ -104,15 +112,15 @@ impl HttpHandler {
         };
 
         match resp.expect("Couldn't write PROPFIND XML") {
-            Ok(xml_resp) => Ok(Response::with((status::MultiStatus, xml_resp, "text/xml;charset=utf-8".parse::<Mime>().unwrap()))),
+            Ok(xml_resp) => Ok(Response::with((status::MultiStatus, xml_resp, text_xml_charset_utf8()))),
             Err(resp) => resp,
         }
     }
 
     /// Adapted from
     /// https://github.com/tylerwhall/hyperdav-server/blob/415f512ac030478593ad389a3267aeed7441d826/src/lib.rs#L459
-    fn handle_webdav_propfind_write_output<'n, N: BorrowXmlName<'n>>(&self, req: &mut Request, url: String, path: &Path, props: &[&'n [N]], just_names: bool,
-                                                                     depth: Depth)
+    fn handle_webdav_propfind_write_output<'n, N: BorrowXmlName<'n>>(&self, req: &mut Request, mut url: String, path: &Path, props: &[&'n [N]],
+                                                                     just_names: bool, depth: Depth)
                                                                      -> Result<Result<Vec<u8>, IronResult<Response>>, XmlWError> {
         let mut out = intialise_xml_output()?;
         out.write(namespaces_for_props("D:multistatus", props.iter().flat_map(|pp| pp.iter())))?;
@@ -121,7 +129,7 @@ impl HttpHandler {
         self.handle_propfind_path(&mut out, &url, &path, &meta, props, just_names)?;
 
         if meta.is_dir() {
-            if let Some(ir) = self.handle_webdav_propfind_path_recursive(req, &mut out, url, &path, props, just_names, depth)? {
+            if let Some(ir) = self.handle_webdav_propfind_path_recursive(req, &mut out, &mut url, &path, props, just_names, depth)? {
                 return Ok(Err(ir));
             }
         }
@@ -131,17 +139,19 @@ impl HttpHandler {
         Ok(Ok(out.into_inner()))
     }
 
-    fn handle_webdav_propfind_path_recursive<'n, W: Write, N: BorrowXmlName<'n>>(&self, req: &mut Request, out: &mut XmlWriter<W>, root_url: String,
+    fn handle_webdav_propfind_path_recursive<'n, W: Write, N: BorrowXmlName<'n>>(&self, req: &mut Request, out: &mut XmlWriter<W>, root_url: &mut String,
                                                                                  root_path: &Path, props: &[&'n [N]], just_names: bool, depth: Depth)
                                                                                  -> Result<Option<IronResult<Response>>, XmlWError> {
+        if !root_url.ends_with('/') {
+            root_url.push('/');
+        }
+        let root_url_orig_len = root_url.len();
+
         let mut links_left = MAX_SYMLINKS;
         if let Some(next_depth) = depth.lower() {
             for f in root_path.read_dir().expect("Failed to read requested directory").map(|p| p.expect("Failed to iterate over requested directory")) {
-                let mut url = root_url.clone();
-                if !url.ends_with('/') {
-                    url.push('/');
-                }
-                url.push_str(f.file_name().to_str().expect("Filename not UTF-8"));
+                root_url.truncate(root_url_orig_len);
+                root_url.push_str(&f.file_name().to_string_lossy()[..]);
 
                 let mut path = f.path();
                 let mut symlink = false;
@@ -162,13 +172,11 @@ impl HttpHandler {
 
                 if !(!path.exists() || (symlink && !self.follow_symlinks) ||
                      (symlink && self.follow_symlinks && self.sandbox_symlinks && !is_descendant_of(&path, &self.hosted_directory.1))) {
-                    self.handle_propfind_path(out,
-                                              &url,
-                                              &path,
-                                              &path.metadata().expect("Failed to get requested file metadata"),
-                                              props,
-                                              just_names)?;
-                    self.handle_webdav_propfind_path_recursive(req, out, url, &path, props, just_names, next_depth)?;
+                    let metadata = path.metadata().expect("Failed to get requested file metadata");
+                    self.handle_propfind_path(out, &root_url, &path, &metadata, props, just_names)?;
+                    if metadata.is_dir() {
+                        self.handle_webdav_propfind_path_recursive(req, out, root_url, &path, props, just_names, next_depth)?;
+                    }
                 }
             }
         }
@@ -193,27 +201,37 @@ impl HttpHandler {
             return self.handle_nonexistent(req, req_p);
         }
 
-        let props = match parse_proppatch(req) {
-            Ok(props) => props,
+        let (props, actionables) = match parse_proppatch(req) {
+            Ok(pp) => pp,
             Err(e) => {
                 log!(self.log,
                      "{} tried to {red}PROPPATCH{reset} {yellow}{}{reset} with invalid XML",
                      self.remote_addresses(&req),
                      req_p.display());
-                return self.handle_generated_response_encoding(req,
-                                                               status::BadRequest,
-                                                               html_response(ERROR_HTML, &["400 Bad Request", &format!("Invalid XML: {}", e), ""]));
+                return self.handle_generated_response_encoding(req, status::BadRequest, error_html("400 Bad Request", format_args!("Invalid XML: {}", e), ""));
             }
         };
 
         log!(self.log,
              "{} requested {red}PROPPATCH{reset} of {} on {yellow}{}{reset}",
              self.remote_addresses(&req),
-             CommaList(props.iter().map(|p| &p.0.local_name)),
+             CommaList(props.iter().map(|p| if p.1.is_empty() {
+                 DisplayThree(&p.0.local_name, "", "")
+             } else {
+                 DisplayThree(&p.0.local_name, "=", &p.1[..])
+             })),
              req_p.display());
 
+        set_times(&req_p,
+                  actionables.Win32LastModifiedTime,
+                  actionables.Win32LastAccessTime,
+                  actionables.Win32CreationTime);
+        if let Some(ex) = actionables.executable {
+            set_executable(&req_p, ex);
+        }
+
         match write_proppatch_output(&props, req.url.as_ref()).expect("Couldn't write PROPPATCH XML") {
-            Ok(xml_resp) => Ok(Response::with((status::MultiStatus, xml_resp, "text/xml;charset=utf-8".parse::<Mime>().unwrap()))),
+            Ok(xml_resp) => Ok(Response::with((status::MultiStatus, xml_resp, text_xml_charset_utf8()))),
             Err(resp) => resp,
         }
     }
@@ -371,7 +389,7 @@ impl HttpHandler {
                 _ => {
                     self.handle_generated_response_encoding(req,
                                                             status::BadRequest,
-                                                            html_response(ERROR_HTML, &["400 Bad Request", &format!("Invalid depth: {}", depth), ""]))
+                                                            error_html("400 Bad Request", format_args!("Invalid depth: {}", depth), ""))
                 }
             }
         }
@@ -493,7 +511,7 @@ impl HttpHandler {
                 }
 
                 "Win32LastAccessTime" => {
-                    out.write(XmlWEvent::start_element((WEBDAV_XML_NAMESPACE_MICROSOFT.0, "Win32FileAttributes")))?;
+                    out.write(XmlWEvent::start_element((WEBDAV_XML_NAMESPACE_MICROSOFT.0, "Win32LastAccessTime")))?;
                     out.write(XmlWEvent::characters(&file_time_accessed(meta).rfc3339().to_string()))?;
                 }
 
@@ -568,7 +586,7 @@ fn parse_propfind(req: &mut Request) -> Result<PropfindVariant, Result<String, X
     }
 
 
-    let mut xml = XmlReader::new_with_config(&mut req.body, DEFAULT_XML_PARSER_CONFIG.clone());
+    let mut xml = XmlReader::new_with_config(&mut req.body, default_xml_parser_config());
     let mut state = State::Start;
     let mut props = vec![];
 
@@ -612,8 +630,51 @@ fn start_client_prop_element<W: Write>(out: &mut XmlWriter<W>, prop: XmlName) ->
     out.write(XmlWEvent::start_element(prop))
 }
 
+// <?xml version="1.0" encoding="utf-8" ?>
+// <D:propertyupdate xmlns:D="DAV:" xmlns:Z="urn:schemas-microsoft-com:">
+//     <D:set>
+//         <D:prop>
+//             <Z:Win32CreationTime>Sat, 30 Dec 2017 17:50:04 GMT</Z:Win32CreationTime>
+//             <Z:Win32LastAccessTime>Wed, 08 May 2024 13:50:28 GMT</Z:Win32LastAccessTime>
+//             <Z:Win32LastModifiedTime>Sat, 30 Dec 2017 17:50:04 GMT</Z:Win32LastModifiedTime>
+//             <Z:Win32FileAttributes>00000000</Z:Win32FileAttributes>
+//
+//         <D:prop>
+//             <Z:Win32LastModifiedTime>Sat, 30 Dec 2017 17:50:04 GMT</Z:Win32LastModifiedTime>
+//             <Z:Win32FileAttributes>00000020</Z:Win32FileAttributes>
+//
+// <?xml version="1.0" encoding="utf-8" ?>
+// <D:propertyupdate xmlns:D="DAV:">
+//     <D:set>
+//         <D:prop>
+//             <executable xmlns="http://apache.org/dav/props/">T</executable>
+#[derive(Debug, Copy, Clone, Hash, PartialOrd, Ord, PartialEq, Eq)]
+#[allow(non_snake_case)]
+struct ProppatchActionables {
+    Win32CreationTime: Option<u64>, // ms since epoch
+    Win32LastAccessTime: Option<u64>, // ms since epoch
+    Win32LastModifiedTime: Option<u64>, // ms since epoch
+    executable: Option<bool>,
+}
+
+impl ProppatchActionables {
+    fn new() -> ProppatchActionables {
+        ProppatchActionables {
+            Win32CreationTime: None,
+            Win32LastAccessTime: None,
+            Win32LastModifiedTime: None,
+            executable: None,
+        }
+    }
+}
+
+fn win32time(t: &str) -> Option<u64> {
+    let tm = strptime(&t, "%a, %d %b %Y %T %Z").ok()?.to_timespec();
+    Some(tm.sec as u64 * 1000 + (tm.nsec / 1000 / 1000) as u64)
+}
+
 /// https://tools.ietf.org/html/rfc2518#section-12.13
-fn parse_proppatch(req: &mut Request) -> Result<Vec<(OwnedXmlName, bool)>, String> {
+fn parse_proppatch(req: &mut Request) -> Result<(Vec<(OwnedXmlName, String)>, ProppatchActionables), String> {
     #[derive(Debug, Copy, Clone, Hash, PartialOrd, Ord, PartialEq, Eq)]
     enum State {
         Start,
@@ -623,12 +684,13 @@ fn parse_proppatch(req: &mut Request) -> Result<Vec<(OwnedXmlName, bool)>, Strin
         InProp,
     }
 
-
-    let mut xml = XmlReader::new_with_config(&mut req.body, DEFAULT_XML_PARSER_CONFIG.clone());
+    let mut xml = XmlReader::new_with_config(&mut req.body, default_xml_parser_config());
     let mut state = State::Start;
     let mut props = vec![];
     let mut propname = None;
     let mut is_remove = false;
+    let mut actionables = ProppatchActionables::new();
+    let mut propdata = String::new();
 
     loop {
         let event = xml.next().map_err(|e| e.to_string())?;
@@ -645,21 +707,31 @@ fn parse_proppatch(req: &mut Request) -> Result<Vec<(OwnedXmlName, bool)>, Strin
                 state = State::Action;
                 is_remove = true;
             }
-            (State::PropertyUpdate, XmlREvent::EndElement { .. }) => return Ok(props),
+            (State::PropertyUpdate, XmlREvent::EndElement { .. }) => return Ok((props, actionables)),
 
             (State::Action, XmlREvent::StartElement { ref name, .. }) if name.local_name == "prop" => state = State::Prop,
             (State::Action, XmlREvent::EndElement { .. }) => state = State::PropertyUpdate,
 
             (State::Prop, XmlREvent::StartElement { name, .. }) => {
                 state = State::InProp;
-                propname = Some(name.clone());
-                props.push((name, is_remove));
+                propname = Some(name);
             }
             (State::Prop, XmlREvent::EndElement { .. }) => state = State::Action,
 
             (State::InProp, XmlREvent::EndElement { name, .. }) => {
-                if Some(name) == propname {
+                if Some(&name) == propname.as_ref() {
+                    props.push((name, mem::replace(&mut propdata, String::new())));
                     state = State::Prop;
+                }
+            }
+            (State::InProp, XmlREvent::Characters(data)) if !is_remove => {
+                propdata = data;
+                match &propname.as_ref().unwrap().local_name[..] {
+                    "Win32CreationTime" => actionables.Win32CreationTime = win32time(&propdata),
+                    "Win32LastAccessTime" => actionables.Win32LastAccessTime = win32time(&propdata),
+                    "Win32LastModifiedTime" => actionables.Win32LastModifiedTime = win32time(&propdata),
+                    "executable" => actionables.executable = Some(propdata == "T"),
+                    _ => propdata = String::new(),
                 }
             }
             (State::InProp, _) => {}
@@ -669,9 +741,9 @@ fn parse_proppatch(req: &mut Request) -> Result<Vec<(OwnedXmlName, bool)>, Strin
     }
 }
 
-fn write_proppatch_output(props: &[(OwnedXmlName, bool)], req_url: &GenericUrl) -> Result<Result<Vec<u8>, IronResult<Response>>, XmlWError> {
+fn write_proppatch_output(props: &[(OwnedXmlName, String)], req_url: &GenericUrl) -> Result<Result<Vec<u8>, IronResult<Response>>, XmlWError> {
     let mut out = intialise_xml_output()?;
-    out.write(namespaces_for_props("D:multistatus", props.iter().map(|pp| &pp.0)))?;
+    out.write(namespaces_for_props("D:multistatus", props.iter().map(|p| &p.0)))?;
 
     out.write(XmlWEvent::start_element("D:href"))?;
     out.write(XmlWEvent::characters(req_url.as_str()))?;
@@ -735,7 +807,7 @@ fn copy_response_multierror(errors: &[(IoError, String)], req_url: &GenericUrl) 
 }
 
 fn intialise_xml_output() -> Result<XmlWriter<Vec<u8>>, XmlWError> {
-    let mut out = XmlWriter::new_with_config(vec![], DEFAULT_XML_EMITTER_CONFIG.clone());
+    let mut out = XmlWriter::new_with_config(vec![], default_xml_emitter_config());
 
     out.write(XmlWEvent::StartDocument {
             version: XmlVersion::Version10,
@@ -749,11 +821,16 @@ fn intialise_xml_output() -> Result<XmlWriter<Vec<u8>>, XmlWError> {
 fn namespaces_for_props<'n, N: 'n + BorrowXmlName<'n>, Ni: Iterator<Item = &'n N>>(elem_name: &str, props: Ni) -> XmlWEventStartElementBuilder {
     let mut bldr = XmlWEvent::start_element(elem_name).ns(WEBDAV_XML_NAMESPACES[0].0, WEBDAV_XML_NAMESPACES[0].1);
 
-    for prop_namespace in props.map(|p| p.borrow().borrow_xml_name()).flat_map(|p| p.namespace).unique() {
+    for prop_namespace in props.map(|p| p.borrow_xml_name()).flat_map(|p| p.namespace).unique() {
         if let Some((prefix, namespace)) = WEBDAV_XML_NAMESPACES[1..].iter().find(|(_, ns)| *ns == prop_namespace) {
             bldr = bldr.ns(*prefix, *namespace);
         }
     }
 
     bldr
+}
+
+/// text/xml; charset=utf-8
+fn text_xml_charset_utf8() -> Mime {
+    Mime(MimeTopLevel::Text, MimeSubLevel::Xml, vec![(MimeAttr::Charset, MimeAttrValue::Utf8)])
 }

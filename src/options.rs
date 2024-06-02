@@ -13,6 +13,7 @@
 
 use clap::{AppSettings, ErrorKind as ClapErrorKind, Error as ClapError, Arg, App};
 use std::collections::btree_map::{BTreeMap, Entry as BTreeMapEntry};
+use std::ffi::{OsString, OsStr};
 use std::collections::BTreeSet;
 use std::env::{self, temp_dir};
 use std::num::NonZeroU64;
@@ -21,16 +22,9 @@ use std::str::FromStr;
 use std::borrow::Cow;
 use iron::mime::Mime;
 use std::net::IpAddr;
-use regex::Regex;
+use std::{str, fs};
 use cidr::IpCidr;
-use std::fs;
-
-
-lazy_static! {
-    static ref CREDENTIALS_REGEX: Regex = Regex::new("^[^:]+(?::[^:]+)?$").unwrap();
-    static ref PATH_CREDENTIALS_REGEX: Regex = Regex::new("^(.+)=([^:]+(?::[^:]+)?)?$").unwrap();
-    static ref HEADER_REGEX: Regex = Regex::new("^([^:]+):[[:space:]]*(.+)$").unwrap();
-}
+use blake3;
 
 
 #[derive(Debug, Copy, Clone, Hash, PartialEq, Eq, PartialOrd, Ord)]
@@ -87,12 +81,20 @@ pub struct Options {
     pub allow_writes: bool,
     /// Whether to encode filesystem files. Default: true
     pub encode_fs: bool,
+    /// Consume at most this much space for encoded filesystem files.
+    pub encoded_filesystem_limit: Option<u64>,
+    /// Consume at most this much memory for encoded generated responses.
+    pub encoded_generated_limit: Option<u64>,
+    /// Prune cached encoded data older than this many seconds.
+    pub encoded_prune: Option<u64>,
     /// How much to suppress output
     ///
     ///   * >= 1 – suppress serving status lines ("IP was served something")
     ///   * >= 2 – suppress startup except for auth data, if present
     ///   * >= 3 – suppress all startup messages
     pub loglevel: LogLevel,
+    /// Whether to include the time in the log output. Default: `true`
+    pub log_time: bool,
     /// Whether to colourise the log output. Default: `true`
     pub log_colour: bool,
     /// Whether to handle WebDAV requests. Default: false
@@ -110,7 +112,7 @@ pub struct Options {
     /// Header names and who we trust them from in `HEADER-NAME:CIDR` format
     pub proxy_redirs: BTreeMap<IpCidr, String>,
     /// Extension -> MIME type mapping overrides; empty string for no extension
-    pub mime_type_overrides: BTreeMap<String, Mime>,
+    pub mime_type_overrides: BTreeMap<OsString, Mime>,
     /// Max amount of data per second each request is allowed to return. Default: `None`
     pub request_bandwidth: Option<NonZeroU64>,
     /// Additional headers to add to every response
@@ -138,8 +140,15 @@ impl Options {
             .arg(Arg::from_usage("-l --no-listings 'Never generate dir listings. Default: false'"))
             .arg(Arg::from_usage("-i --no-indices 'Do not automatically use index files. Default: false'"))
             .arg(Arg::from_usage("-e --no-encode 'Do not encode filesystem files. Default: false'"))
+            .arg(Arg::from_usage("--encoded-filesystem [FS_LIMIT] 'Consume at most FS_LIMIT space for encoded filesystem files.'")
+                .validator(|s| Options::size_parse(s.into()).map(|_| ())))
+            .arg(Arg::from_usage("--encoded-generated [GEN_LIMIT] 'Consume at most GEN_LIMIT memory for encoded generated responses.'")
+                .validator(|s| Options::size_parse(s.into()).map(|_| ())))
+            .arg(Arg::from_usage("--encoded-prune [MAX_AGE] 'Prune cached encoded data older than MAX_AGE.'")
+                .validator(|s| Options::age_parse(s.into()).map(|_| ())))
             .arg(Arg::from_usage("-x --strip-extensions 'Allow stripping index extensions from served paths. Default: false'"))
             .arg(Arg::from_usage("-q --quiet... 'Suppress increasing amounts of output'"))
+            .arg(Arg::from_usage("-Q --quiet-time 'Don't prefix logs with the timestamp'"))
             .arg(Arg::from_usage("-c --no-colour 'Don't colourise the log output'"))
             .arg(Arg::from_usage("-d --webdav 'Handle WebDAV requests. Default: false'"))
             .arg(Arg::from_usage("--ssl [TLS_IDENTITY] 'Data for HTTPS, identity file. Password in HTTP_SSL_PASS env var, otherwise empty'")
@@ -166,7 +175,7 @@ impl Options {
             .arg(Arg::from_usage("-m --mime-type [EXTENSION:MIME-TYPE]... 'Always return MIME-TYPE for files with EXTENSION'")
                 .number_of_values(1)
                 .use_delimiter(false)
-                .validator(|s| Options::mime_type_override_parse(s.into()).map(|_| ())))
+                .validator_os(|s| Options::mime_type_override_parse(s.into()).map(|_| ())))
             .arg(Arg::from_usage("--request-bandwidth [BYTES] 'Limit each request to returning BYTES per second, or 0 for unlimited. Default: 0'")
                 .validator(|s| Options::bandwidth_parse(s.into()).map(|_| ())))
             .arg(Arg::from_usage("-H --header [NAME: VALUE]... 'Headers to add to every response'")
@@ -223,7 +232,11 @@ impl Options {
                     ("$TEMP".to_string(), temp_dir())
                 };
                 let suffix = dir_pb.into_os_string().to_str().unwrap().replace(r"\\?\", "").replace(':', "").replace('\\', "/").replace('/', "-");
-                let suffix = format!("http{}{}", if suffix.starts_with('-') { "" } else { "-" }, suffix);
+                let suffix = if suffix.len() >= 255 - (4 + 1) {
+                    format!("http-{}", blake3::hash(suffix.as_bytes()).to_hex()) // avoid NAME_MAX
+                } else {
+                    format!("http{}{}", if suffix.starts_with('-') { "" } else { "-" }, suffix)
+                };
 
                 (format!("{}{}{}",
                          temp_s,
@@ -240,7 +253,11 @@ impl Options {
             strip_extensions: matches.is_present("strip-extensions"),
             allow_writes: matches.is_present("allow-write"),
             encode_fs: !matches.is_present("no-encode"),
+            encoded_filesystem_limit: matches.value_of("encoded-filesystem").and_then(|s| Options::size_parse(s.into()).ok()),
+            encoded_generated_limit: matches.value_of("encoded-generated").and_then(|s| Options::size_parse(s.into()).ok()),
+            encoded_prune: matches.value_of("encoded-prune").and_then(|s| Options::age_parse(s.into()).ok()),
             loglevel: matches.occurrences_of("quiet").into(),
+            log_time: !matches.is_present("quiet-time"),
             log_colour: !matches.is_present("no-colour"),
             webdav: matches.is_present("webdav"),
             tls_data: matches.value_of("ssl").map(|id| ((id.to_string(), fs::canonicalize(id).unwrap()), env::var("HTTP_SSL_PASS").unwrap_or_default())),
@@ -249,7 +266,7 @@ impl Options {
             generate_path_auth: generate_path_auth,
             proxies: matches.values_of("proxy").unwrap_or_default().map(Cow::from).map(Options::proxy_parse).map(Result::unwrap).collect(),
             proxy_redirs: matches.values_of("proxy-redir").unwrap_or_default().map(Cow::from).map(Options::proxy_parse).map(Result::unwrap).collect(),
-            mime_type_overrides: matches.values_of("mime-type")
+            mime_type_overrides: matches.values_of_os("mime-type")
                 .unwrap_or_default()
                 .map(Cow::from)
                 .map(Options::mime_type_override_parse)
@@ -281,7 +298,10 @@ impl Options {
     }
 
     fn credentials_validator(s: String) -> Result<(), String> {
-        if CREDENTIALS_REGEX.is_match(&s) {
+        if match s.split_once(':') {
+            Some((u, p)) => !u.is_empty() && !p.contains(':'),
+            None => !s.is_empty(),
+        } {
             Ok(())
         } else {
             Err(format!("Global authentication credentials \"{}\" need be in format \"username[:password]\"", s))
@@ -289,7 +309,7 @@ impl Options {
     }
 
     fn path_credentials_validator(s: String) -> Result<(), String> {
-        if PATH_CREDENTIALS_REGEX.is_match(&s) {
+        if Options::parse_path_credentials(&s).is_some() {
             Ok(())
         } else {
             Err(format!("Per-path authentication credentials \"{}\" need be in format \"path=[username[:password]]\"", s))
@@ -297,9 +317,24 @@ impl Options {
     }
 
     fn decode_path_credentials(s: &str) -> (String, Option<&str>) {
-        let creds = PATH_CREDENTIALS_REGEX.captures(s).unwrap();
+        Options::parse_path_credentials(s).unwrap()
+    }
 
-        (Options::normalise_path(&creds[1]), creds.get(2).map(|m| m.as_str()))
+    fn parse_path_credentials(s: &str) -> Option<(String, Option<&str>)> {
+        let (path, creds) = s.split_once('=')?;
+
+        Some((Options::normalise_path(path),
+              if creds.is_empty() {
+                  None
+              } else {
+                  if match creds.split_once(':') {
+                      Some((u, p)) => u.is_empty() || p.contains(':'),
+                      None => false,
+                  } {
+                      return None;
+                  }
+                  Some(creds)
+              }))
     }
 
     fn path_credentials_dupe(path: &str) -> ! {
@@ -349,6 +384,40 @@ impl Options {
         u16::from_str(&s).map(|_| ()).map_err(|_| format!("{} is not a valid port number", s))
     }
 
+    fn size_parse<'s>(s: Cow<'s, str>) -> Result<u64, String> {
+        let mut s = &s[..];
+        if matches!(s.as_bytes().last(), Some(b'b' | b'B')) {
+            s = &s[..s.len() - 1];
+        }
+        let mul: u64 = match s.as_bytes().last() {
+            Some(b'k' | b'K') => 1024u64,
+            Some(b'm' | b'M') => 1024u64 * 1024u64,
+            Some(b'g' | b'G') => 1024u64 * 1024u64 * 1024u64,
+            Some(b't' | b'T') => 1024u64 * 1024u64 * 1024u64 * 1024u64,
+            Some(b'p' | b'P') => 1024u64 * 1024u64 * 1024u64 * 1024u64 * 1024u64,
+            _ => 1,
+        };
+        if mul != 1 {
+            s = &s[..s.len() - 1];
+        }
+        s.parse().map(|size: u64| size * mul).map_err(|e| format!("{} not a valid (optionally-K/M/G/T/P[B]-suffixed) number: {}", s, e))
+    }
+
+    fn age_parse<'s>(s: Cow<'s, str>) -> Result<u64, String> {
+        let mut s = &s[..];
+        let mul: u64 = match s.as_bytes().last() {
+            Some(b's') => 1,
+            Some(b'm') => 60,
+            Some(b'h') => 60 * 60,
+            Some(b'd') => 60 * 60 * 24,
+            _ => 1,
+        };
+        if mul != 1 {
+            s = &s[..s.len() - 1];
+        }
+        s.parse().map(|age: u64| age * mul).map_err(|e| format!("{} not a valid (optionally-s/m/h/d-suffixed) number: {}", s, e))
+    }
+
     fn proxy_parse<'s>(s: Cow<'s, str>) -> Result<(IpCidr, String), String> {
         match s.find(":") {
             None => Err(format!("{} not in HEADER-NAME:CIDR format", s)),
@@ -391,20 +460,32 @@ impl Options {
         Ok(NonZeroU64::new(number.checked_mul(multiplier).ok_or_else(|| format!("{} * {} too big", number, multiplier))?))
     }
 
-    fn mime_type_override_parse<'s>(s: Cow<'s, str>) -> Result<(String, Mime), String> {
-        match s.find(":") {
-            None => Err(format!("{} not in EXTENSION:MIME-TYPE format", s)),
+    fn mime_type_override_parse<'s>(s: Cow<'s, OsStr>) -> Result<(OsString, Mime), OsString> {
+        let b = s.as_encoded_bytes();
+        match b.iter().position(|&b| b == b':') {
+            None => Err(format!("{} not in EXTENSION:MIME-TYPE format", s.to_string_lossy()).into()),
             Some(col_idx) => {
-                let mt = s[col_idx + 1..].parse().map_err(|()| format!("{} not a valid MIME type", &s[col_idx + 1..]))?;
+                let mime_s = str::from_utf8(&b[col_idx + 1..]).map_err(|e| format!("{} {}", s.to_string_lossy(), e))?;
+                let mt = mime_s.parse().map_err(|()| format!("{} not a valid MIME type", mime_s))?;
 
-                let mut s = s.into_owned();
+                let mut s = s.into_owned().into_encoded_bytes();
                 s.truncate(col_idx);
-                Ok((s, mt))
+                Ok((unsafe { OsString::from_encoded_bytes_unchecked(s) }, mt))
             }
         }
     }
 
     fn header_parse(s: &str) -> Result<(String, Vec<u8>), String> {
-        HEADER_REGEX.captures(s).map(|hdr| (hdr[1].to_string(), hdr[2].as_bytes().to_vec())).ok_or_else(|| format!("\"{}\" invalid format", s))
+        s.split_once(':')
+            .and_then(|(hn, mut hd)| {
+                hd = hd.trim_start();
+                if !hn.is_empty() && !hd.is_empty() {
+                    Some((hn, hd))
+                } else {
+                    None
+                }
+            })
+            .map(|(hn, hd)| (hn.to_string(), hd.as_bytes().to_vec()))
+            .ok_or_else(|| format!("\"{}\" invalid format", s))
     }
 }

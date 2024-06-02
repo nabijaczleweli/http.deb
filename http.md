@@ -182,6 +182,9 @@ pass parameters like what port to use.
 
     Currently supported write operations: PUT and DELETE.
 
+    With PUTs, the X-Last-Modified/X-OC-MTime headers can be specified to
+    milliseconds/seconds since epoch, and this will be set on the file's st_mtim.
+
     This is false by default because it's most likely not something you
     want to do.
 
@@ -214,6 +217,25 @@ pass parameters like what port to use.
 
     This is false by default because it's useful for reducing bandwidth usage.
 
+  --encoded-filesystem FS_LIMIT
+  --encoded-generated GEN_LIMIT
+
+    Consume at most  FS_LIMIT space for encoded filesystem files (in TEMP) and
+            at most GEN_LIMIT memory for encoded generated responses.
+
+    The arguments are an integer, optionally followed by case-insensitive
+    k (kilobyte), m (megabyte), g (gigabyte), t (terabyte), or p (petabyte),
+    optionally followed by case-insensitive b.
+
+    This quota may be exceeded temporarily while servicing a request.
+
+  --encoded-prune MAX_AGE
+
+    Prune cached encoded data older than MAX_AGE.
+
+    The argument is given in seconds, optionally followed by case-insensitive
+    s (seconds), m (minutes), h (hours), or d (days).
+
   -x --strip-extensions
 
     Allow stripping index extensions from served paths:
@@ -231,6 +253,10 @@ pass parameters like what port to use.
       N >= 2 – suppress startup except for auth data, if present
       N >= 3 – suppress all startup messages
 
+  -Q --quiet-time
+
+    Don't prepend log lines with the timestamp.
+
   -c --no-colour
 
     Don't colourise log output.
@@ -240,6 +266,24 @@ pass parameters like what port to use.
     Handle WebDAV requests.
 
     False by default.
+
+## NOTES
+
+When returning files from the filesystem, the `ETag` returned
+is based on the filesystem, i-node, and precise modification time.
+
+Naturally, this means that when serving files from filesystems with coarse
+timestamps (like FAT with its 1s-resolution), changes may be hidden from
+`ETag`-using user agents (if a file was modified at
+2023-02-12T01:00:00.100000000, a UA requested and cached a response for
+2023-02-12T01:00:00.000000000, then the file was modified again at
+2023-02-12T01:00:00.900000000, subsequent requests with
+`If-None-Match: 2023-02-12T01:00:00.000000000` will all return
+304 Not Modified).
+
+This isn't really much of an issue,
+don't use FAT as a High-Performance File System (or reload w/o cache),
+and `If-Modified-Since` is affected with this by design, on all back-ends.
 
 ## EXAMPLES
 

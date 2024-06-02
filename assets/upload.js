@@ -1,10 +1,10 @@
 "use strict";
 
-window.addEventListener("load", function() {
+window.addEventListener("DOMContentLoaded", function() {
   const SUPPORTED_TYPES = ["Files", "application/x-moz-file"];
 
   let body = document.getElementsByTagName("body")[0];
-  let file_upload = document.getElementById("file_upload");
+  let file_upload_text = null;
   let remaining_files = 0;
   let url = document.location.pathname;
   if(!url.endsWith("/"))
@@ -24,13 +24,6 @@ window.addEventListener("load", function() {
       ev.preventDefault();
 
       for(let i = ev.dataTransfer.files.length - 1; i >= 0; --i) {
-        if(!ev.dataTransfer.items[i].webkitGetAsEntry)
-          ++remaining_files;
-        else
-          recurse_count(ev.dataTransfer.items[i].webkitGetAsEntry());
-      }
-
-      for(let i = ev.dataTransfer.files.length - 1; i >= 0; --i) {
         if(!ev.dataTransfer.items[i].webkitGetAsEntry) {
           let file = ev.dataTransfer.files[i];
           upload_file(url + encodeURIComponent(file.name), file);
@@ -40,9 +33,8 @@ window.addEventListener("load", function() {
     }
   });
 
+  let file_upload = document.querySelector("input[type=file]");
   file_upload.addEventListener("change", function() {
-    remaining_files += file_upload.files.length;
-
     for(let i = file_upload.files.length - 1; i >= 0; --i) {
       let file = file_upload.files[i];
       upload_file(url + encodeURIComponent(file.name), file);
@@ -50,12 +42,25 @@ window.addEventListener("load", function() {
   });
 
   function upload_file(req_url, file) {
+    ++remaining_files;
+    if(!file_upload_text) {
+      file_upload_text = document.createTextNode(1);
+      file_upload.parentNode.insertBefore(file_upload_text, file_upload.nextSibling); // insertafter
+    } else
+      file_upload_text.data = remaining_files;
+
     let request = new XMLHttpRequest();
     request.addEventListener("loadend", function(e) {
-      if(--remaining_files === 0)
-        window.location.reload();
+      if(request.status >= 200 && request.status < 300) {
+        if(!--remaining_files)
+         window.location.reload();
+        file_upload_text.data = remaining_files;
+      } else
+        file_upload.outerHTML = req_url + "<br />" + request.response;
     });
     request.open("PUT", req_url);
+    if(file.lastModified)
+      request.setRequestHeader("X-Last-Modified", file.lastModified);
     request.send(file);
   }
 
@@ -67,20 +72,22 @@ window.addEventListener("load", function() {
         });
       else
         upload_file(base_url + entry.fullPath.split("/").filter(function(seg) { return seg; }).map(encodeURIComponent).join("/"), entry.getFile());
-    } else
-      entry.createReader().readEntries(function(e) {
-        e.forEach(function(f) {
-          recurse_upload(f, base_url)
-        });
+    } else // https://developer.mozilla.org/en-US/docs/Web/API/DataTransferItem/webkitGetAsEntry#javascript:
+           //   Note: To read all files in a directory, readEntries needs to be
+           //   called repeatedly until it returns an empty array. In
+           //   Chromium-based browsers, the following example will only return a
+           //   max of 100 entries.
+           // This is actually true.
+      all_in_reader(entry.createReader(), function(f) {
+        recurse_upload(f, base_url)
       });
   }
 
-  function recurse_count(entry) {
-    if(entry.isFile) {
-      ++remaining_files;
-    } else
-      entry.createReader().readEntries(function(e) {
-        e.forEach(recurse_count);
-      });
+  function all_in_reader(reader, f) {
+    reader.readEntries(function(e) {
+      e.forEach(f);
+      if(e.length)
+        all_in_reader(reader, f);
+    });
   }
 });

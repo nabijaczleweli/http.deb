@@ -1,66 +1,59 @@
+#![cfg_attr(target_os = "windows", feature(windows_by_handle))]
+
 extern crate hyper_native_tls;
 extern crate percent_encoding;
 extern crate trivial_colours;
-#[cfg(not(target_os = "windows"))]
-extern crate os_str_generic;
-#[macro_use]
-extern crate lazy_static;
 extern crate serde_json;
 extern crate mime_guess;
 extern crate itertools;
 extern crate tabwriter;
-extern crate lazysort;
-extern crate unicase;
+extern crate arrayvec;
 extern crate walkdir;
-extern crate base64;
 extern crate blake3;
 extern crate brotli;
 extern crate flate2;
 extern crate rfsapi;
 #[cfg(target_os = "windows")]
 extern crate winapi;
-extern crate bzip2;
 extern crate ctrlc;
 extern crate serde;
-extern crate regex;
 extern crate cidr;
 #[macro_use]
 extern crate clap;
 extern crate iron;
-#[cfg(not(any(target_os = "windows", target_os = "macos")))]
 extern crate libc;
 extern crate rand;
 extern crate time;
 extern crate xml;
 
-mod error;
 mod options;
 
 pub mod ops;
 pub mod util;
 
-pub use error::Error;
+pub struct Error(pub String);
 pub use options::{LogLevel, Options};
 
 use std::mem;
+use libc::exit;
 use iron::Iron;
 use std::net::IpAddr;
-use std::process::exit;
+use std::time::Duration;
 use tabwriter::TabWriter;
 use std::io::{Write, stdout};
 use std::collections::BTreeSet;
-use std::sync::{Arc, Mutex, Condvar};
+use std::sync::{Mutex, Condvar};
 use hyper_native_tls::NativeTlsServer;
 
 
 fn main() {
     let result = actual_main();
-    exit(result);
+    unsafe { exit(result) }
 }
 
 fn actual_main() -> i32 {
     if let Err(err) = result_main() {
-        eprintln!("{}", err);
+        eprintln!("{}", err.0);
         1
     } else {
         0
@@ -76,30 +69,18 @@ fn result_main() -> Result<(), Error> {
         opts.path_auth_data.insert(path, Some(ops::generate_auth_data()));
     }
 
-    let handler = ops::SimpleChain {
-        handler: ops::HttpHandler::new(&opts),
+    let handler: &_ = Box::leak(Box::new(ops::SimpleChain::<ops::PruneChain, _> {
+        handler: ops::PruneChain::new(&opts),
         after: opts.request_bandwidth.map(ops::LimitBandwidthMiddleware::new),
-    };
+    }));
     let mut responder = if let Some(p) = opts.port {
         if let Some(&((_, ref id), ref pw)) = opts.tls_data.as_ref() {
                 Iron::new(handler).https((opts.bind_address, p),
-                                         NativeTlsServer::new(id, pw).map_err(|err| {
-                        Error {
-                            desc: "TLS certificate",
-                            op: "open",
-                            more: err.to_string().into(),
-                        }
-                    })?)
+                                         NativeTlsServer::new(id, pw).map_err(|err| Error(format!("Opening TLS certificate: {}", err)))?)
             } else {
                 Iron::new(handler).http((opts.bind_address, p))
             }
-            .map_err(|_| {
-                Error {
-                    desc: "server",
-                    op: "start",
-                    more: "port taken".into(),
-                }
-            })
+            .map_err(|_| Error(format!("Starting server: port taken")))
     } else {
         ops::try_ports(handler, opts.bind_address, util::PORT_SCAN_LOWEST, util::PORT_SCAN_HIGHEST, &opts.tls_data)
     }?;
@@ -108,9 +89,7 @@ fn result_main() -> Result<(), Error> {
         if opts.log_colour {
             print!("{}", trivial_colours::Reset);
         }
-        print!("Hosting \"{}\" on port {}",
-               opts.hosted_directory.0,
-               responder.socket.port());
+        print!("Hosting \"{}\" on port {}", opts.hosted_directory.0, responder.socket.port());
         if responder.socket.ip() != IpAddr::from([0, 0, 0, 0]) {
             print!(" under address {}", responder.socket.ip());
         }
@@ -132,9 +111,9 @@ fn result_main() -> Result<(), Error> {
         }
 
         for (ext, mime_type) in opts.mime_type_overrides {
-            match &ext[..] {
+            match &ext.to_string_lossy()[..] {
                 "" => println!("Serving files with no extension as {}.", mime_type),
-                _ => println!("Serving files with .{} extension as {}.", ext, mime_type),
+                ext => println!("Serving files with .{} extension as {}.", ext, mime_type),
             }
         }
 
@@ -178,18 +157,23 @@ fn result_main() -> Result<(), Error> {
         println!("Ctrl-C to stop.");
         println!();
     }
+    let Options { encoded_prune: opts_encoded_prune, temp_directory: opts_temp_directory, generate_tls: opts_generate_tls, .. } = opts;
 
-    let end_handler = Arc::new(Condvar::new());
-    ctrlc::set_handler({
-            let r = end_handler.clone();
-            move || r.notify_one()
-        })
-        .unwrap();
-    drop(end_handler.wait(Mutex::new(()).lock().unwrap()).unwrap());
+    static END_HANDLER: Condvar = Condvar::new();
+    ctrlc::set_handler(|| END_HANDLER.notify_one()).unwrap();
+    if opts_encoded_prune.is_some() {
+        loop {
+            if !END_HANDLER.wait_timeout(Mutex::new(()).lock().unwrap(), Duration::from_secs(handler.handler.prune_interval)).unwrap().1.timed_out() {
+                break;
+            }
+
+            handler.handler.prune();
+        }
+    } else {
+        drop(END_HANDLER.wait(Mutex::new(()).lock().unwrap()).unwrap());
+    }
+
     responder.close().unwrap();
-
-    // This is necessary because the server isn't Drop::drop()ped when the responder is
-    ops::HttpHandler::clean_temp_dirs(&opts.temp_directory, opts.loglevel, opts.log_colour);
-
+    handler.handler.handler.clean_temp_dirs(&opts_temp_directory, opts_generate_tls);
     Ok(())
 }

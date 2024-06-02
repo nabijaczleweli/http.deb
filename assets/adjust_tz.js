@@ -1,15 +1,14 @@
 "use strict";
 
-window.addEventListener("load", function() {
-  const FORMAT = "yyyy-MM-dd HH:mm:ss";
-
+window.addEventListener("DOMContentLoaded", function() {
   let modtime_h = document.getElementsByTagName("th")[2];
   if(modtime_h)
-    modtime_h.innerText = modtime_h.innerText.replace("(UTC)", "").trim();
+    modtime_h.innerText = modtime_h.innerText.replace(" (UTC)", "");
 
-  let timestamps = document.getElementsByClassName("datetime");
-  Array.from(timestamps).forEach(function(r) {
-    let dt = r.innerText.replace("UTC", "").trim();
-    r.innerText = Date.parseString(dt, FORMAT).format(FORMAT)
-  });
+  let timestamps = document.getElementsByTagName("time");
+  for(let r of timestamps) {
+    let dt = new Date(parseInt(r.getAttribute("ms")));
+    dt.setMinutes(dt.getMinutes() - dt.getTimezoneOffset())
+    r.innerText = dt.toISOString().slice(0, 19).replace("T", " ");
+  }
 });

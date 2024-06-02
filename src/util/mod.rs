@@ -5,97 +5,61 @@ mod os;
 mod webdav;
 mod content_encoding;
 
-use base64;
 use std::path::Path;
 use percent_encoding;
 use walkdir::WalkDir;
 use std::borrow::Cow;
 use rfsapi::RawFileData;
-use std::{cmp, f64, str};
 use std::time::SystemTime;
-use std::collections::HashMap;
-use time::{self, Duration, Tm};
 use iron::{mime, Headers, Url};
-use base64::display::Base64Display;
-use std::fmt::{self, Write as FmtWrite};
-use iron::error::HttpResult as HyperResult;
+use time::{self, Duration, Tm};
+use std::{cmp, fmt, f64, mem, str};
+use mime_guess::guess_mime_type_opt;
 use std::fs::{self, FileType, Metadata, File};
 use iron::headers::{HeaderFormat, UserAgent, Header};
-use mime_guess::{guess_mime_type_opt, get_mime_type_str};
 use xml::name::{OwnedName as OwnedXmlName, Name as XmlName};
-use std::io::{ErrorKind as IoErrorKind, BufReader, BufRead, Result as IoResult, Error as IoError};
+use iron::error::{HttpResult as HyperResult, HttpError as HyperError};
+use iron::mime::{Mime, SubLevel as MimeSubLevel, TopLevel as MimeTopLevel};
+use std::io::{ErrorKind as IoErrorKind, BufReader, BufRead, Result as IoResult, Error as IoError, Write};
 
 pub use self::os::*;
 pub use self::webdav::*;
 pub use self::content_encoding::*;
 
 
-/// The generic HTML page to use as response to errors.
-pub const ERROR_HTML: &str = include_str!("../../assets/error.html");
-
-/// The HTML page to use as template for a requested directory's listing.
-pub const DIRECTORY_LISTING_HTML: &str = include_str!("../../assets/directory_listing.html");
-
-/// The HTML page to use as template for a requested directory's listing for mobile devices.
-pub const MOBILE_DIRECTORY_LISTING_HTML: &str = include_str!("../../assets/directory_listing_mobile.html");
-
-lazy_static! {
-    /// Collection of data to be injected into generated responses.
-    pub static ref ASSETS: HashMap<&'static str, Cow<'static, str>> = {
-        let mut ass = HashMap::with_capacity(10);
-        ass.insert("favicon",
-            Cow::Owned(format!("data:{};base64,{}",
-                               get_mime_type_str("ico").unwrap(),
-                               Base64Display::with_config(&include_bytes!("../../assets/favicon.ico")[..], base64::STANDARD))));
-        ass.insert("dir_icon",
-            Cow::Owned(format!("data:{};base64,{}",
-                               get_mime_type_str("gif").unwrap(),
-                               Base64Display::with_config(&include_bytes!("../../assets/icons/directory.gif")[..], base64::STANDARD))));
-        ass.insert("file_icon",
-            Cow::Owned(format!("data:{};base64,{}",
-                               get_mime_type_str("gif").unwrap(),
-                               Base64Display::with_config(&include_bytes!("../../assets/icons/file.gif")[..], base64::STANDARD))));
-        ass.insert("file_binary_icon",
-            Cow::Owned(format!("data:{};base64,{}",
-                               get_mime_type_str("gif").unwrap(),
-                               Base64Display::with_config(&include_bytes!("../../assets/icons/file_binary.gif")[..], base64::STANDARD))));
-        ass.insert("file_image_icon",
-            Cow::Owned(format!("data:{};base64,{}",
-                               get_mime_type_str("gif").unwrap(),
-                               Base64Display::with_config(&include_bytes!("../../assets/icons/file_image.gif")[..], base64::STANDARD))));
-        ass.insert("file_text_icon",
-            Cow::Owned(format!("data:{};base64,{}",
-                               get_mime_type_str("gif").unwrap(),
-                               Base64Display::with_config(&include_bytes!("../../assets/icons/file_text.gif")[..], base64::STANDARD))));
-        ass.insert("back_arrow_icon",
-            Cow::Owned(format!("data:{};base64,{}",
-                               get_mime_type_str("gif").unwrap(),
-                               Base64Display::with_config(&include_bytes!("../../assets/icons/back_arrow.gif")[..], base64::STANDARD))));
-        ass.insert("new_dir_icon",
-            Cow::Owned(format!("data:{};base64,{}",
-                               get_mime_type_str("gif").unwrap(),
-                               Base64Display::with_config(&include_bytes!("../../assets/icons/new_directory.gif")[..], base64::STANDARD))));
-        ass.insert("delete_file_icon",
-            Cow::Owned(format!("data:{};base64,{}",
-                               get_mime_type_str("png").unwrap(),
-                               Base64Display::with_config(&include_bytes!("../../assets/icons/delete_file.png")[..], base64::STANDARD))));
-        ass.insert("rename_icon",
-            Cow::Owned(format!("data:{};base64,{}",
-                               get_mime_type_str("png").unwrap(),
-                               Base64Display::with_config(&include_bytes!("../../assets/icons/rename.png")[..], base64::STANDARD))));
-        ass.insert("confirm_icon",
-            Cow::Owned(format!("data:{};base64,{}",
-                               get_mime_type_str("png").unwrap(),
-                               Base64Display::with_config(&include_bytes!("../../assets/icons/confirm.png")[..], base64::STANDARD))));
-        ass.insert("date", Cow::Borrowed(include_str!("../../assets/date.js")));
-        ass.insert("manage", Cow::Borrowed(include_str!("../../assets/manage.js")));
-        ass.insert("manage_mobile", Cow::Borrowed(include_str!("../../assets/manage_mobile.js")));
-        ass.insert("manage_desktop", Cow::Borrowed(include_str!("../../assets/manage_desktop.js")));
-        ass.insert("upload", Cow::Borrowed(include_str!("../../assets/upload.js")));
-        ass.insert("adjust_tz", Cow::Borrowed(include_str!("../../assets/adjust_tz.js")));
-        ass
-    };
+pub trait HtmlResponseElement {
+    fn commit(self, data: &mut Vec<u8>);
 }
+impl<'s> HtmlResponseElement for &'s str {
+    fn commit(self, data: &mut Vec<u8>) {
+        data.extend(self.as_bytes());
+    }
+}
+impl<'s> HtmlResponseElement for fmt::Arguments<'s> {
+    fn commit(self, data: &mut Vec<u8>) {
+        let mut orig = unsafe { String::from_utf8_unchecked(mem::replace(data, Vec::new())) };
+        let _ = fmt::write(&mut orig, self);
+        let _ = mem::replace(data, orig.into_bytes());
+    }
+}
+impl<F: FnOnce(&mut Vec<u8>)> HtmlResponseElement for F {
+    fn commit(self, data: &mut Vec<u8>) {
+        self(data)
+    }
+}
+
+// The generic HTML page to use as response to errors.
+// pub fn error_html<T0: ...>(a0: ...) -> String
+include!(concat!(env!("OUT_DIR"), "/error.html.rs"));
+
+// The HTML page to use as template for a requested directory's listing.
+// pub fn directory_listing_html<T0: ...>(a0: ...) -> String
+include!(concat!(env!("OUT_DIR"), "/directory_listing.html.rs"));
+
+// The HTML page to use as template for a requested directory's listing for mobile devices.
+// pub fn directory_listing_mobile_html<T0: ...>(a0: ...) -> String
+include!(concat!(env!("OUT_DIR"), "/directory_listing_mobile.html.rs"));
+
 
 /// The port to start scanning from if no ports were given.
 pub const PORT_SCAN_LOWEST: u16 = 8000;
@@ -126,9 +90,9 @@ impl Header for WwwAuthenticate {
         "WWW-Authenticate"
     }
 
-    /// Dummy impl returning an empty value, since we're only ever sending these
-    fn parse_header(_: &[Vec<u8>]) -> HyperResult<WwwAuthenticate> {
-        Ok(WwwAuthenticate("".into()))
+    /// We only ever send these
+    fn parse_header<T: AsRef<[u8]>>(_: &[T]) -> HyperResult<WwwAuthenticate> {
+        unreachable!()
     }
 }
 
@@ -138,21 +102,77 @@ impl HeaderFormat for WwwAuthenticate {
     }
 }
 
+/// The `X-Last-Modified` header: milliseconds since epoch for PUTs.
+///
+/// Required since XMLHttpRequests can't set `Date:`.
+///
+/// No formatting, we only receive.
+#[derive(Debug, Clone, Hash, PartialOrd, Ord, PartialEq, Eq)]
+pub struct XLastModified(pub u64);
+
+impl Header for XLastModified {
+    fn header_name() -> &'static str {
+        "X-Last-Modified"
+    }
+
+    fn parse_header<T: AsRef<[u8]>>(data: &[T]) -> HyperResult<XLastModified> {
+        if data.len() != 1 {
+            return Err(HyperError::Header);
+        }
+        Ok(XLastModified(str::from_utf8(data.last().ok_or(HyperError::Header).map(|d| d.as_ref())?).map_err(|_| HyperError::Header)?
+            .parse()
+            .map_err(|_| HyperError::Header)?))
+    }
+}
+
+/// We only ever receive these
+impl HeaderFormat for XLastModified {
+    fn fmt_header(&self, _: &mut fmt::Formatter) -> fmt::Result {
+        unreachable!()
+    }
+}
+
+/// The `X-OC-MTIME` header: seconds since epoch for PUTs (Total Commander Android WebDAV).
+///
+/// Required since XMLHttpRequests can't set `Date:`.
+///
+/// No formatting, we only receive.
+#[derive(Debug, Clone, Hash, PartialOrd, Ord, PartialEq, Eq)]
+pub struct XOcMTime(pub u64);
+
+impl Header for XOcMTime {
+    fn header_name() -> &'static str {
+        "X-OC-MTime"
+    }
+
+    fn parse_header<T: AsRef<[u8]>>(data: &[T]) -> HyperResult<XOcMTime> {
+        if data.len() != 1 {
+            return Err(HyperError::Header);
+        }
+        Ok(XOcMTime(str::from_utf8(data.last().ok_or(HyperError::Header).map(|d| d.as_ref())?).map_err(|_| HyperError::Header)?
+            .parse()
+            .map_err(|_| HyperError::Header)?))
+    }
+}
+
+/// We only ever receive these
+impl HeaderFormat for XOcMTime {
+    fn fmt_header(&self, _: &mut fmt::Formatter) -> fmt::Result {
+        unreachable!()
+    }
+}
+
 #[derive(Debug, Copy, Clone, Hash, PartialOrd, Ord, PartialEq, Eq)]
 pub struct CommaList<D: fmt::Display, I: Iterator<Item = D>>(pub I);
 
 impl<D: fmt::Display, I: Iterator<Item = D> + Clone> fmt::Display for CommaList<D, I> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let mut itr = self.0.clone();
-        if let Some(item) = itr.next() {
-            item.fmt(f)?;
-
-            for item in itr {
+        for (i, item) in self.0.clone().enumerate() {
+            if i != 0 {
                 f.write_str(", ")?;
-                item.fmt(f)?;
             }
+            item.fmt(f)?;
         }
-
         Ok(())
     }
 }
@@ -190,65 +210,50 @@ impl<'n> BorrowXmlName<'n> for OwnedXmlName {
 }
 
 #[derive(Debug, Copy, Clone, Hash, PartialOrd, Ord, PartialEq, Eq)]
-pub struct Spaces(pub usize);
+pub struct Maybe<T: fmt::Display>(pub Option<T>);
 
-impl fmt::Display for Spaces {
+impl<T: fmt::Display> fmt::Display for Maybe<T> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        for _ in 0..self.0 {
-            f.write_char(' ')?;
+        if let Some(dt) = self.0.as_ref() {
+            dt.fmt(f)?;
         }
         Ok(())
     }
 }
 
+#[derive(Debug, Copy, Clone, Hash, PartialOrd, Ord, PartialEq, Eq)]
+pub struct MsAsS(pub u64);
 
-
-/// Uppercase the first character of the supplied string.
-///
-/// Based on http://stackoverflow.com/a/38406885/2851815
-///
-/// # Examples
-///
-/// ```
-/// # use https::util::uppercase_first;
-/// assert_eq!(uppercase_first("abolish"), "Abolish".to_string());
-/// ```
-pub fn uppercase_first(s: &str) -> String {
-    let mut c = s.chars();
-    match c.next() {
-        None => String::new(),
-        Some(f) => f.to_uppercase().collect::<String>() + c.as_str(),
+impl fmt::Display for MsAsS {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}.{:03}", self.0 / 1000, self.0 % 1000)
     }
 }
+
 
 /// Percent-encode the last character if it's white space
 ///
 /// Firefox treats, e.g. `href="http://henlo/menlo   "` as `href="http://henlo/menlo"`,
 /// but that final whitespace is significant, so this turns it into `href="http://henlo/menlo  %20"`
-pub fn encode_tail_if_trimmed(mut s: String) -> String {
-    let c = s.chars().rev().next();
-    if c.map(|c| c.is_whitespace()).unwrap_or(false) {
-        let c = c.unwrap();
-
-        s.pop();
-        s.push('%');
-
-        let mut cb = [0u8; 4];
-        c.encode_utf8(&mut cb);
-        for b in cb.iter().take(c.len_utf8()) {
-            write!(s, "{:02X}", b).expect("Couldn't allocate two more characters?");
+pub fn encode_tail_if_trimmed(mut s: Cow<str>) -> Cow<str> {
+    if let Some(c) = s.as_bytes().last().copied() {
+        if c.is_ascii_whitespace() {
+            let ed = unsafe { s.to_mut().as_mut_vec() };
+            ed.pop();
+            write!(ed, "%{:02X}", c).expect("Couldn't allocate two more characters?");
         }
-
-        s
-    } else {
-        s
     }
+    s
 }
 
 /// %-escape special characters in an URL
-pub fn escape_specials<S: AsRef<str>>(s: S) -> String {
-    let s = s.as_ref();
-    let mut ret = Vec::with_capacity(s.len());
+pub fn escape_specials(s: &str) -> Cow<str> {
+    let replacements = s.bytes().filter(|b| matches!(b, b'%' | b'#' | b'?' | b'[' | b']' | b'"')).count();
+    if replacements == 0 {
+        return s.into();
+    }
+
+    let mut ret = Vec::with_capacity(s.len() + replacements * 2);
     for &b in s.as_bytes() {
         match b {
             b'%' => ret.extend(b"%25"),
@@ -256,10 +261,11 @@ pub fn escape_specials<S: AsRef<str>>(s: S) -> String {
             b'?' => ret.extend(b"%3F"),
             b'[' => ret.extend(b"%5B"),
             b']' => ret.extend(b"%5D"),
+            b'"' => ret.extend(b"%22"),
             _ => ret.push(b),
         }
     }
-    unsafe { String::from_utf8_unchecked(ret) }
+    unsafe { String::from_utf8_unchecked(ret) }.into()
 }
 
 /// Check if the specified file is to be considered "binary".
@@ -286,21 +292,6 @@ fn file_binary_impl(path: &Path) -> bool {
         .unwrap_or(true)
 }
 
-/// Fill out an HTML template.
-///
-/// All fields must be addressed even if formatted to be empty.
-///
-/// # Examples
-///
-/// ```
-/// # use https::util::{html_response, NOT_IMPLEMENTED_HTML};
-/// println!(html_response(NOT_IMPLEMENTED_HTML, &["<p>Abolish the burgeoisie!</p>"]));
-/// ```
-pub fn html_response<S: AsRef<str>>(data: &str, format_strings: &[S]) -> String {
-    ASSETS.iter().fold(format_strings.iter().enumerate().fold(data.to_string(), |d, (i, s)| d.replace(&format!("{{{}}}", i), s.as_ref())),
-                       |d, (k, v)| d.replace(&format!("{{{}}}", k), v))
-}
-
 /// Return the path part of the URL.
 ///
 /// # Example
@@ -313,16 +304,12 @@ pub fn html_response<S: AsRef<str>>(data: &str, format_strings: &[S]) -> String 
 /// let url = Url::parse("127.0.0.1:8000/capitalism/русский/");
 /// assert_eq!(url_path(&url), "capitalism/русский/");
 /// ```
-pub fn url_path(url: &Url) -> String {
-    let path = url.path();
-    if path == [""] {
-        "/".to_string()
-    } else {
-        path.into_iter().fold("".to_string(),
-                              |cur, pp| format!("{}/{}", cur, percent_decode(pp).unwrap_or(Cow::Borrowed("<incorrect UTF8>"))))
-            [1..]
-            .to_string()
+pub fn url_path(url: &Url) -> Cow<str> {
+    let mut path = url.as_ref().path();
+    while path.bytes().nth(0) == Some(b'/') && path.bytes().nth(1) == Some(b'/') {
+        path = &path[1..];
     }
+    percent_decode(path).unwrap_or(Cow::Borrowed("<incorrect UTF8>"))
 }
 
 /// Decode a percent-encoded string (like a part of a URL).
@@ -344,7 +331,7 @@ pub fn file_time_modified_p(f: &Path) -> Tm {
     file_time_modified(&f.metadata().expect("Failed to get file metadata"))
 }
 
-/// Get the timestamp of the file's last modification as a `time::Tm` in UTC.
+/// Get the timestamp of the file's creation as a `time::Tm` in UTC.
 pub fn file_time_created_p(f: &Path) -> Tm {
     file_time_created(&f.metadata().expect("Failed to get file metadata"))
 }
@@ -359,7 +346,7 @@ pub fn file_time_modified(m: &Metadata) -> Tm {
     file_time_impl(m.modified().expect("Failed to get file last modified date"))
 }
 
-/// Get the timestamp of the file's last modification as a `time::Tm` in UTC.
+/// Get the timestamp of the file's creation as a `time::Tm` in UTC.
 pub fn file_time_created(m: &Metadata) -> Tm {
     file_time_impl(m.created().or_else(|_| m.modified()).expect("Failed to get file created date"))
 }
@@ -463,28 +450,68 @@ pub fn is_nonexistent_descendant_of<Pw: AsRef<Path>, Po: AsRef<Path>>(who: Pw, o
     false
 }
 
-/// Construct string representing a human-readable size.
+/// Write a representation as a human-readable size.
 ///
-/// Stolen, adapted and inlined from [fielsize.js](http://filesizejs.com).
-pub fn human_readable_size(s: u64) -> String {
-    lazy_static! {
-        static ref LN_KIB: f64 = 1024f64.log(f64::consts::E);
+/// Stolen, adapted and inlined from [filesize.js](http://filesizejs.com).
+pub struct HumanReadableSize(pub u64);
+
+impl fmt::Display for HumanReadableSize {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        const LN_KIB: f64 = 6.931471805599453; // 1024f64.ln()
+
+        if self.0 == 0 {
+            f.write_str("0 B")
+        } else {
+            let num = self.0 as f64;
+            let exp = cmp::min(cmp::max((num.ln() / LN_KIB) as i32, 0), 8);
+
+            let val = num / 2f64.powi(exp * 10);
+
+            write!(f,
+                   "{} {}",
+                   if exp > 0 {
+                       (val * 10f64).round() / 10f64
+                   } else {
+                       val.round()
+                   },
+                   ["B", "KiB", "MiB", "GiB", "TiB", "PiB", "EiB", "ZiB", "YiB"][cmp::max(exp, 0) as usize])
+        }
     }
+}
 
-    if s == 0 {
-        "0 B".to_string()
-    } else {
-        let num = s as f64;
-        let exp = cmp::min(cmp::max((num.log(f64::consts::E) / *LN_KIB) as i32, 0), 8);
+/// Replace `"` with `_`
+pub struct NoDoubleQuotes<'s>(pub &'s str);
 
-        let val = num / 2f64.powi(exp * 10);
-
-        if exp > 0 {
-                (val * 10f64).round() / 10f64
-            } else {
-                val.round()
+impl<'s> fmt::Display for NoDoubleQuotes<'s> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        for (i, s) in self.0.split('"').enumerate() {
+            if i != 0 {
+                f.write_str("_")?;
             }
-            .to_string() + " " + ["B", "KiB", "MiB", "GiB", "TiB", "PiB", "EiB", "ZiB", "YiB"][cmp::max(exp, 0) as usize]
+            f.write_str(s)?
+        }
+        Ok(())
+    }
+}
+
+/// Replace `&` with `&amp;` and `<` with `&lt;`
+pub struct NoHtmlLiteral<'s>(pub &'s str);
+
+impl<'s> fmt::Display for NoHtmlLiteral<'s> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        for mut s in self.0.split_inclusive(&['&', '<']) {
+            let last = s.as_bytes().last();
+            if matches!(last, Some(b'&' | b'<')) {
+                s = &s[..s.len() - 1];
+            }
+            f.write_str(s)?;
+            match last {
+                Some(b'&') => f.write_str("&amp;")?,
+                Some(b'<') => f.write_str("&lt;")?,
+                _ => {}
+            }
+        }
+        Ok(())
     }
 }
 
@@ -527,9 +554,9 @@ fn get_raw_fs_metadata_impl(f: &Path) -> RawFileData {
     let meta = f.metadata().expect("Failed to get requested file metadata");
     RawFileData {
         mime_type: guess_mime_type_opt(f).unwrap_or_else(|| if file_binary(f) {
-            "application/octet-stream".parse().unwrap()
+            Mime(MimeTopLevel::Application, MimeSubLevel::OctetStream, Default::default()) // application/octet-stream
         } else {
-            "text/plain".parse().unwrap()
+            Mime(MimeTopLevel::Text, MimeSubLevel::Plain, Default::default()) // text/plain
         }),
         name: f.file_name().unwrap().to_str().expect("Failed to get requested file name").to_string(),
         last_modified: file_time_modified(&meta),

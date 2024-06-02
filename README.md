@@ -33,8 +33,9 @@ See [the manpage](http.md) for full list.
 If you have `cargo` installed (you're a Rust developer) all you need to do is:
 
 ```sh
-cargo install https
+cargo install --git https://github.com/thecoshman/http
 ```
+(the `https` crates.io package *was* http, but [is now unpublishable](//github.com/thecoshman/http/pull/160#issuecomment-2143877822))
 
 Which will install `http` and `httplz` (identical, disable one or another if they clash) in the folder where all other binaries go.
 
@@ -80,4 +81,4 @@ The idea is to make a program that can compile down to a simple binary that can 
   * [x] If an index file isn't provided, one will be generated (in memory, no touching the disk, why would you do that you dirty freak you), that will list the current files and folders (and then sub directories will have index files generated as required)
   * [x] Changes made to files should be reflected instantly, as I don't see why anything would be cached... you request a file, a file will be looked for
 
-It's not going to be a 'production ready' tool, it's a quick and dirty way of hosting a folder, so whilst I'll try to make it secure, it is not going to be a serious goal.
+~~It's not going to be a 'production ready' tool, it's a quick and dirty way of hosting a folder, so whilst I'll try to make it secure, it is not going to be a serious goal.~~
