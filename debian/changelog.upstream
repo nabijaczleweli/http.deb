@@ -1,3 +1,155 @@
+v2.0.1          Ain't a thang for me, pain then glory
+
+    Fixed:
+      * Installations via cargo install --git
+        (https://github.com/rust-lang/cargo/issues/14001)
+
+v2.0.0          Temporary thug exchange the same story
+
+    BREAKING:
+      * id=s of files (#-anchors) in directory listings changed to be
+        the filename but tr " _, rather than filename but tr . _ (and "s unescaped!)
+      * id=parent_dir changed to id=..
+      * No longer updateable from crates.io; update with
+          cargo install -f --git https://github.com/thecoshman/http
+        (https://github.com/thecoshman/http/pull/160#issuecomment-2143877822)
+
+    Fixed:
+      * Blockdev size detexion on musl/*BSD/&c.
+        (https://github.com/thecoshman/http/issues/155) (https://github.com/thecoshman/http/issues/157) (https://github.com/thecoshman/http/issues/158)
+      * Truncated-at-100-entries directory uploads on Chromium
+      * MacOS marking all files as WebDAV executable
+      * Potentially hitting NAME_MAX when deciding on temporary directory
+      * Potentially using path of removed file for cached-as-incompressible files
+      * Temporary file for uploads not being removed
+      * All CPUs going 100% for a few seconds on Ctrl-C on Win32 sometimes
+      * /'s index with -wd first directory having full-width instead of square icons
+      * Max (11) brotli encoding strength reduced to 9 (11 takes 50s to encode 11M!)
+      * PROPFIND of <Win32LastAccessTime> returning <Win32FileAttributes>
+        with <Win32LastAccessTime>'s data
+      * -m only taking UTF-8 data even though it's for paths
+      i Closed range requests reading the whole response body into a buffer
+      * PROPFIND Depth: infinity panicking when encountering non-directories
+      * Don't require the current extension to be UTF-8 when encoding a file
+      * Localising stamps in 1000-file directory on Android 14 Browser.apk (Chrome):
+        8+s -> ~200ms
+        (solution by @the-eater)
+        (https://cijber.social/@eater/112506297971225464)
+      * Double-click-to-select text in web UI rename box
+      * " unescaped in listing href=s, making them unnavigable
+      * If encoded file was removed from temp dir, re-encode it instead of panicking
+      * Clicking on the Manage column of Create directory submitting an empty MKCOL
+      h hyper RUSTSEC-2021-0078: potential desync with Content-Length: +123
+        (https://github.com/thecoshman/http/issues/140)
+      h hyper RUSTSEC-2021-0079: potential desync with Transfer-Encoding: chunked
+        (https://github.com/thecoshman/http/issues/140)
+      h traitobject RUSTSEC-2020-0027: reliance on fat pointer representation
+        (https://github.com/thecoshman/http/issues/140)
+      * background-color in directory listing adapted to potential dark theme
+      * Files called file_upload and new_directory potentially interfering
+        with directory listing controls
+      * Add id=.. in mobile listing
+
+    Changed:
+      * Double-iteration over directory uploads removed
+      * Don't-try-to-encode extension list updated
+      * ETag generator is also used to cache file hashes (=> file not read twice)
+      i Always fully 1M-buffer file I/O (used to be 8k)
+      * Also remove the top-level temporary directory (but ignore error)
+      h Start threads on demand, up to the limit, then decay on inactivity
+        (wait 5*threadnum seconds before exit), but keep 1,
+        rather than always having nproc*8
+      * Re-compressed favicon.png (1460B) now used as the favicon inlined in indices
+        instead of a 15k(!+base64) ICO
+      h Never-used bzip2 encoding removed (+ asking for zstd encoding is alloc-free)
+      * PUT symlink isolation is the same as with GET's (returns 404, doesn't read)
+      * Useless HTML attributes in generated responses removed
+      * Rename UI suggested filename no longer includes trailing / for directories
+      * Replaced <meta name="application-name" content="http">
+               & <meta name="author" content="http developers">
+        with <meta name="generator" content="http ${VERSION}">
+      * Mobile directory listings simplified and reduced by 17% in size
+      * Desktop directory listings only allow tabbing to /one/ link per row
+      * Desktop directory listings have "Create directory" colspan=3
+
+    New:
+      * Return ETag and honour If-None-Match/If-Modified-Since for GETs
+      * Live read-out of outstanding requests when uploading from generated index
+      * Invent X-Last-Modified: millis-since-epoch header to set mtime on PUT files
+      * Accept X-OC-MTime: seconds-since-epoch     header (Android Totalcmd-WebDAV)
+      * Actually handle PROPPATCH at all, and allow changing:
+        + Win32{Creation,Last{Access,Modified}}Time  (Windows client)
+        + executable                                 (davfs2)
+      i Limits on size    of encoded files with --encoded-{filesystem,generated} 20M
+      i Limits on max age of encoded files with --encoded-prune 1d
+      * -Q/--quiet-time to remove [%F %T] prefix in log
+      * If PUTted file doesn't already exist, copy it directly from the request body
+      * Accept (ignore) renaming to current name in web UI
+      * Return 503 Service Unavailable with an intelligible error
+        instead of panicking on PUT errors
+      * Display these in the web UI
+      * "confirm" (green tick) icon
+      * Linked-to files in directory listing (like #asdf) highlighted
+      * Mention of Debian repository in README
+
+    Internal:
+      * Needless Borrow::borrow() call removed
+        (report: roz@rozbrajacz.futbol)
+      * Literalise mime types instead of parsing
+      * Don't check if temporary directory exists before trying to delete
+      * Useless lazy_static and regex dependencies killed
+      * Run-time parsing of do-not-encode list replaced with a codegenned function
+        (also kills unicase)
+      * Assets and indices are pre-parsed in build.rs before embedding
+        (also kills base64 and lazysort) (+ initial whitespace trimmed from HTMLs)
+      h Cache allowed methods instead of reallocating every time
+      * Vendored: iron 0.6.1 (with typemap, plugin, and log deps deleted)
+      i Removed automatic annoying Content-Type muddling in iron
+      * Static Ctrl-C handler Condvar
+      * Don't allocate URL path if not necessary, and escape it at most once
+      * Vendored: hyper 0.10.16
+        (with client component, some server body types,
+         and log and env_logger dependencies deleted)
+      h Hash encoded-data caches by Encoding(Type) directly instead of String repr;
+        this also makes us stop distinguishing x-gzip from gzip
+      h Don't require reallocating Server header contents
+      h Don't require allocating RangeUnits in Accept-Ranges header
+      h Use SmallVec for most common case of 1 Content-Encoding
+      h Don't reallocate custom --header names
+      h Don't allocate for COPY/MKCOL/MOVE/PROPFIND/PROPPATCH/LOCK WebDAV requests
+      * Don't clone headers for TRACE
+      h language-tags dependency removed
+      * .. + 1 => ..=
+      * os-str-generic dependency removed
+      * Recompress rename icon (206 -> 192 bytes)
+      * Vendored: rfsapi 0.2.0
+     ir Header parsing takes Cow<'static, [u8]> instead of Vec<u8>
+      h Use VecMap as backing store for Header's PtrMap instead of HashMap
+      * Free unused bits of Options
+      * Don't allocate file length or 404 description as string
+      * Assess file size once, from opened file, for opened ranges
+      * Don't reallocate Range header value
+      * Use the same buffer for recursive PROPFINDs
+      * Produce address indents with {:w$} instead of Spaces(w) writing ' ' w times
+      * Don't allocate in AddressWriter
+      * Don't allocate human-readable size
+      * date.js replaced with standard JS Date manipulation
+      * All document onload => DOMContentLoaded
+      * In a similar vein, move the click event listeners to onclick (perf)
+      * Don't reallocate each filename twice to replace & and < in index
+      * Re-save embedded-in-EXE favicon.ico (15k -> 2k)
+      * Flatten Error to just be a String, instead of three with auto-ingification
+      * Detect EADDRINUSE explicitly when trying new ports,
+        rather than guessing from the I/O error stringification
+      * Ignore RUSTSEC-2021-0145: we don't use a custom allocator
+      * Ignore cargo-audit's "unmaintained" warnings
+      * Ignore RUSTSEC-2020-0071: we do not setenv ever
+      * Ignore RUSTSEC-2022-0022: our version of hyper never uses uninitialized()
+        (https://github.com/thecoshman/http/issues/140)
+      * Desktop directory listing simplified (inlined style, useless <div>)
+
+    i: affects vendored iron; h: affects vendored hyper; r: affects vendored rfsapi
+
 v1.13.2         God save the quing
 
     Fixed:
