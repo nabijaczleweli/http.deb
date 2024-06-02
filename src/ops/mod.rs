@@ -1,19 +1,20 @@
 use blake3;
 use serde_json;
-use std::{fmt, str};
-use std::ffi::OsStr;
-use std::borrow::Cow;
 use std::net::IpAddr;
 use serde::Serialize;
-use unicase::UniCase;
 use std::sync::RwLock;
-use lazysort::SortedBy;
+use std::{fmt, str, mem};
 use cidr::{Cidr, IpCidr};
+use time::precise_time_ns;
+use arrayvec::ArrayString;
 use std::fs::{self, File};
 use std::default::Default;
 use rand::{Rng, thread_rng};
 use iron::modifiers::Header;
 use std::path::{PathBuf, Path};
+use std::ffi::{OsString, OsStr};
+use std::fmt::Write as FmtWrite;
+use iron::headers::EncodingType;
 use iron::url::Url as GenericUrl;
 use mime_guess::get_mime_type_opt;
 use hyper_native_tls::NativeTlsServer;
@@ -21,18 +22,18 @@ use std::collections::{BTreeMap, HashMap};
 use self::super::{LogLevel, Options, Error};
 use std::process::{ExitStatus, Command, Child, Stdio};
 use rfsapi::{RawFsApiHeader, FilesetData, RawFileData};
+use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 use rand::distributions::uniform::Uniform as UniformDistribution;
 use rand::distributions::Alphanumeric as AlphanumericDistribution;
-use iron::mime::{Mime, SubLevel as MimeSubLevel, TopLevel as MimeTopLevel};
-use std::io::{self, ErrorKind as IoErrorKind, SeekFrom, Write, Error as IoError, Read, Seek};
-use iron::{headers, status, method, mime, IronResult, Listening, Response, TypeMap, Request, Handler, Iron};
-use self::super::util::{WwwAuthenticate, DisplayThree, CommaList, Spaces, Dav, url_path, file_hash, is_symlink, encode_str, encode_file, file_length,
-                        html_response, file_binary, client_mobile, percent_decode, escape_specials, file_icon_suffix, is_actually_file, is_descendant_of,
-                        response_encoding, detect_file_as_dir, encoding_extension, file_time_modified, file_time_modified_p, get_raw_fs_metadata,
-                        human_readable_size, encode_tail_if_trimmed, is_nonexistent_descendant_of, USER_AGENT, ERROR_HTML, MAX_SYMLINKS, INDEX_EXTENSIONS,
-                        MIN_ENCODING_GAIN, MAX_ENCODING_SIZE, MIN_ENCODING_SIZE, DAV_LEVEL_1_METHODS, DIRECTORY_LISTING_HTML, MOBILE_DIRECTORY_LISTING_HTML,
-                        BLACKLISTED_ENCODING_EXTENSIONS};
-
+use iron::{headers, status, method, IronResult, Listening, Response, Headers, Request, Handler, Iron};
+use std::io::{self, ErrorKind as IoErrorKind, BufReader, SeekFrom, Write, Error as IoError, Read, Seek};
+use iron::mime::{Mime, Attr as MimeAttr, Value as MimeAttrValue, SubLevel as MimeSubLevel, TopLevel as MimeTopLevel};
+use self::super::util::{HumanReadableSize, WwwAuthenticate, NoDoubleQuotes, NoHtmlLiteral, XLastModified, DisplayThree, CommaList, XOcMTime, MsAsS, Maybe, Dav,
+                        url_path, file_etag, file_hash, set_mtime_f, is_symlink, encode_str, error_html, encode_file, file_length, file_binary, client_mobile,
+                        percent_decode, escape_specials, file_icon_suffix, is_actually_file, is_descendant_of, response_encoding, detect_file_as_dir,
+                        encoding_extension, file_time_modified, file_time_modified_p, dav_level_1_methods, get_raw_fs_metadata, encode_tail_if_trimmed,
+                        extension_is_blacklisted, directory_listing_html, directory_listing_mobile_html, is_nonexistent_descendant_of, USER_AGENT, MAX_SYMLINKS,
+                        INDEX_EXTENSIONS, MIN_ENCODING_GAIN, MAX_ENCODING_SIZE, MIN_ENCODING_SIZE};
 
 macro_rules! log {
     ($logcfg:expr, $fmt:expr) => {
@@ -40,8 +41,10 @@ macro_rules! log {
         use trivial_colours::{Reset as CReset, Colour as C};
 
         if $logcfg.0 {
-            if $logcfg.1 {
-                print!("{}[{}]{} ", C::Cyan, now().strftime("%F %T").unwrap(), CReset);
+            if $logcfg.2 {
+                if $logcfg.1 {
+                    print!("{}[{}]{} ", C::Cyan, now().strftime("%F %T").unwrap(), CReset);
+                }
                 println!(concat!($fmt, "{black:.0}{red:.0}{green:.0}{yellow:.0}{blue:.0}{magenta:.0}{cyan:.0}{white:.0}{reset:.0}"),
                          black = C::Black,
                          red = C::Red,
@@ -53,7 +56,9 @@ macro_rules! log {
                          white = C::White,
                          reset = CReset);
             } else {
-                print!("[{}] ", now().strftime("%F %T").unwrap());
+                if $logcfg.1 {
+                    print!("[{}] ", now().strftime("%F %T").unwrap());
+                }
                 println!(concat!($fmt, "{black:.0}{red:.0}{green:.0}{yellow:.0}{blue:.0}{magenta:.0}{cyan:.0}{white:.0}{reset:.0}"),
                          black = "",
                          red = "",
@@ -72,8 +77,10 @@ macro_rules! log {
         use trivial_colours::{Reset as CReset, Colour as C};
 
         if $logcfg.0 {
-            if $logcfg.1 {
-                print!("{}[{}]{} ", C::Cyan, now().strftime("%F %T").unwrap(), CReset);
+            if $logcfg.2 {
+                if $logcfg.1 {
+                    print!("{}[{}]{} ", C::Cyan, now().strftime("%F %T").unwrap(), CReset);
+                }
                 println!(concat!($fmt, "{black:.0}{red:.0}{green:.0}{yellow:.0}{blue:.0}{magenta:.0}{cyan:.0}{white:.0}{reset:.0}"),
                          $($arg)*,
                          black = C::Black,
@@ -86,7 +93,9 @@ macro_rules! log {
                          white = C::White,
                          reset = CReset);
             } else {
-                print!("[{}] ", now().strftime("%F %T").unwrap());
+                if $logcfg.1 {
+                    print!("[{}] ", now().strftime("%F %T").unwrap());
+                }
                 println!(concat!($fmt, "{black:.0}{red:.0}{green:.0}{yellow:.0}{blue:.0}{magenta:.0}{cyan:.0}{white:.0}{reset:.0}"),
                          $($arg)*,
                          black = "",
@@ -103,14 +112,15 @@ macro_rules! log {
     };
 }
 
+mod prune;
 mod webdav;
 mod bandwidth;
 
+pub use self::prune::PruneChain;
 pub use self::bandwidth::{LimitBandwidthMiddleware, SimpleChain};
 
 
-// TODO: ideally this String here would be Encoding instead but hyper is bad
-type CacheT<Cnt> = HashMap<(blake3::Hash, String), Cnt>;
+type CacheT<Cnt> = HashMap<(blake3::Hash, EncodingType), (Cnt, AtomicU64)>;
 
 pub struct HttpHandler {
     pub hosted_directory: (String, PathBuf),
@@ -119,8 +129,8 @@ pub struct HttpHandler {
     pub generate_listings: bool,
     pub check_indices: bool,
     pub strip_extensions: bool,
-    /// (at all, log_colour)
-    pub log: (bool, bool),
+    /// (at all, log_time, log_colour)
+    pub log: (bool, bool, bool),
     pub webdav: bool,
     pub global_auth_data: Option<(String, Option<String>)>,
     pub path_auth_data: BTreeMap<String, Option<(String, Option<String>)>>,
@@ -128,10 +138,18 @@ pub struct HttpHandler {
     pub encoded_temp_dir: Option<(String, PathBuf)>,
     pub proxies: BTreeMap<IpCidr, String>,
     pub proxy_redirs: BTreeMap<IpCidr, String>,
-    pub mime_type_overrides: BTreeMap<String, Mime>,
+    pub mime_type_overrides: BTreeMap<OsString, Mime>,
     pub additional_headers: Vec<(String, Vec<u8>)>,
-    cache_gen: RwLock<CacheT<Vec<u8>>>,
-    cache_fs: RwLock<CacheT<(PathBuf, bool)>>,
+
+    pub cache_gen: RwLock<CacheT<Vec<u8>>>,
+    pub cache_fs_files: RwLock<HashMap<String, blake3::Hash>>, // etag -> cache key
+    pub cache_fs: RwLock<CacheT<(PathBuf, bool, u64)>>,
+    pub cache_gen_size: AtomicU64,
+    pub cache_fs_size: AtomicU64,
+    pub encoded_filesystem_limit: u64,
+    pub encoded_generated_limit: u64,
+
+    pub allowed_methods: &'static [method::Method],
 }
 
 impl HttpHandler {
@@ -153,6 +171,14 @@ impl HttpHandler {
             }
         }
 
+        let allowed_methods = [method::Options, method::Get, method::Head, method::Trace]
+            .iter()
+            .chain(dav_level_1_methods(opts.allow_writes).iter().filter(|_| opts.webdav))
+            .chain([method::Put, method::Delete].iter().filter(|_| opts.allow_writes))
+            .cloned()
+            .collect::<Vec<_>>()
+            .leak();
+
         HttpHandler {
             hosted_directory: opts.hosted_directory.clone(),
             follow_symlinks: opts.follow_symlinks,
@@ -160,7 +186,7 @@ impl HttpHandler {
             generate_listings: opts.generate_listings,
             check_indices: opts.check_indices,
             strip_extensions: opts.strip_extensions,
-            log: (opts.loglevel < LogLevel::NoServeStatus, opts.log_colour),
+            log: (opts.loglevel < LogLevel::NoServeStatus, opts.log_time, opts.log_colour),
             webdav: opts.webdav,
             global_auth_data: global_auth_data,
             path_auth_data: path_auth_data,
@@ -168,20 +194,31 @@ impl HttpHandler {
             encoded_temp_dir: HttpHandler::temp_subdir(&opts.temp_directory, opts.encode_fs, "encoded"),
             cache_gen: Default::default(),
             cache_fs: Default::default(),
+            cache_fs_files: Default::default(),
+            cache_gen_size: Default::default(),
+            cache_fs_size: Default::default(),
+            encoded_filesystem_limit: opts.encoded_filesystem_limit.unwrap_or(u64::MAX),
+            encoded_generated_limit: opts.encoded_generated_limit.unwrap_or(u64::MAX),
             proxies: opts.proxies.clone(),
             proxy_redirs: opts.proxy_redirs.clone(),
             mime_type_overrides: opts.mime_type_overrides.clone(),
             additional_headers: opts.additional_headers.clone(),
+            allowed_methods: allowed_methods,
         }
     }
 
-    pub fn clean_temp_dirs(temp_dir: &(String, PathBuf), loglevel: LogLevel, log_colour: bool) {
-        for (temp_name, temp_dir) in ["writes", "encoded", "tls"].iter().flat_map(|tn| HttpHandler::temp_subdir(temp_dir, true, tn)) {
-            if temp_dir.exists() && fs::remove_dir_all(&temp_dir).is_ok() {
-                log!((loglevel < LogLevel::NoServeStatus, log_colour),
-                     "Deleted temp dir {magenta}{}{reset}",
-                     temp_name);
+    pub fn clean_temp_dirs(&self, temp_directory: &(String, PathBuf), generate_tls: bool) {
+        mem::forget(self.cache_fs_files.write());
+        mem::forget(self.cache_fs.write());
+
+        let tls = HttpHandler::temp_subdir(temp_directory, generate_tls, "tls");
+        for (temp_name, temp_dir) in [self.writes_temp_dir.as_ref(), self.encoded_temp_dir.as_ref(), tls.as_ref()].iter().flatten() {
+            if fs::remove_dir_all(&temp_dir).is_ok() {
+                log!(self.log, "Deleted temp dir {magenta}{}{reset}", temp_name);
             }
+        }
+        if fs::remove_dir(&temp_directory.1).is_ok() {
+            log!(self.log, "Deleted temp dir {magenta}{}{reset}", temp_directory.0);
         }
     }
 
@@ -202,7 +239,7 @@ impl HttpHandler {
     }
 }
 
-impl Handler for HttpHandler {
+impl Handler for &'static HttpHandler {
     fn handle(&self, req: &mut Request) -> IronResult<Response> {
         if self.global_auth_data.is_some() || !self.path_auth_data.is_empty() {
             if let Some(resp) = self.verify_auth(req)? {
@@ -222,28 +259,20 @@ impl Handler for HttpHandler {
                 })
             }
             method::Trace => self.handle_trace(req),
-            method::Extension(ref ext) => {
-                if self.webdav {
-                    match &ext[..] {
-                        "COPY" => self.handle_webdav_copy(req),
-                        "MKCOL" => self.handle_webdav_mkcol(req),
-                        "MOVE" => self.handle_webdav_move(req),
-                        "PROPFIND" => self.handle_webdav_propfind(req),
-                        "PROPPATCH" => self.handle_webdav_proppatch(req),
 
-                        _ => self.handle_bad_method(req),
-                    }
-                } else {
-                    self.handle_bad_method(req)
-                }
-            }
+            method::DavCopy if self.webdav => self.handle_webdav_copy(req),
+            method::DavMkcol if self.webdav => self.handle_webdav_mkcol(req),
+            method::DavMove if self.webdav => self.handle_webdav_move(req),
+            method::DavPropfind if self.webdav => self.handle_webdav_propfind(req),
+            method::DavProppatch if self.webdav => self.handle_webdav_proppatch(req),
+
             _ => self.handle_bad_method(req),
         }?;
         if self.webdav {
             resp.headers.set(Dav::LEVEL_1);
         }
         for (h, v) in &self.additional_headers {
-            resp.headers.append_raw(h.clone(), v.clone());
+            resp.headers.append_raw(&h[..], v[..].into());
         }
         Ok(resp)
     }
@@ -321,19 +350,7 @@ impl HttpHandler {
 
     fn handle_options(&self, req: &mut Request) -> IronResult<Response> {
         log!(self.log, "{} asked for {red}OPTIONS{reset}", self.remote_addresses(&req));
-
-        let mut allowed_methods = Vec::with_capacity(6 +
-                                                     if self.webdav {
-            DAV_LEVEL_1_METHODS.len()
-        } else {
-            0
-        });
-        allowed_methods.extend_from_slice(&[method::Options, method::Get, method::Put, method::Delete, method::Head, method::Trace]);
-        if self.webdav {
-            allowed_methods.extend_from_slice(&DAV_LEVEL_1_METHODS);
-        }
-
-        Ok(Response::with((status::NoContent, Header(headers::Server(USER_AGENT.to_string())), Header(headers::Allow(allowed_methods)))))
+        Ok(Response::with((status::NoContent, Header(headers::Server(USER_AGENT.into())), Header(headers::Allow(self.allowed_methods.into())))))
     }
 
     fn handle_get(&self, req: &mut Request) -> IronResult<Response> {
@@ -355,13 +372,13 @@ impl HttpHandler {
         }
 
         let is_file = is_actually_file(&req_p.metadata().expect("Failed to get file metadata").file_type(), &req_p);
-        let range = req.headers.get().map(|r: &headers::Range| (*r).clone());
+        let range = req.headers.get_mut().map(|r: &mut headers::Range| mem::replace(r, headers::Range::Bytes(vec![])));
         let raw_fs = req.headers.get().map(|r: &RawFsApiHeader| r.0).unwrap_or(false);
         if is_file {
             if raw_fs {
                 self.handle_get_raw_fs_file(req, req_p)
-            } else if range.is_some() {
-                self.handle_get_file_range(req, req_p, range.unwrap())
+            } else if let Some(range) = range {
+                self.handle_get_file_range(req, req_p, range)
             } else {
                 self.handle_get_file(req, req_p)
             }
@@ -382,9 +399,7 @@ impl HttpHandler {
              req.url,
              &cause[3..cause.len() - 4]); // Strip <p> tags
 
-        self.handle_generated_response_encoding(req,
-                                                status::BadRequest,
-                                                html_response(ERROR_HTML, &["400 Bad Request", "The request URL was invalid.", cause]))
+        self.handle_generated_response_encoding(req, status::BadRequest, error_html("400 Bad Request", "The request URL was invalid.", cause))
     }
 
     #[inline(always)]
@@ -402,8 +417,9 @@ impl HttpHandler {
         let url_p = url_path(&req.url);
         self.handle_generated_response_encoding(req,
                                                 status,
-                                                html_response(ERROR_HTML,
-                                                              &[&status.to_string()[..], &format!("The requested entity \"{}\" doesn't exist.", url_p), ""]))
+                                                error_html(&status.canonical_reason().unwrap()[..],
+                                                           format_args!("The requested entity \"{}\" doesn't exist.", url_p),
+                                                           ""))
     }
 
     fn handle_get_raw_fs_file(&self, req: &mut Request, req_p: PathBuf) -> IronResult<Response> {
@@ -420,26 +436,59 @@ impl HttpHandler {
                                         })
     }
 
+    fn etag_match(req_tags: &[headers::EntityTag], etag: &str) -> bool {
+        req_tags.iter().any(|retag| retag.tag() == etag)
+    }
+
+    fn should_304_path(req: &mut Request, req_p: &Path, etag: &str) -> bool {
+        if let Some(headers::IfNoneMatch::Items(inm)) = req.headers.get::<headers::IfNoneMatch>() {
+            if HttpHandler::etag_match(inm, &etag) {
+                return true;
+            }
+        } else if let Some(headers::IfModifiedSince(since)) = req.headers.get::<headers::IfModifiedSince>() {
+            // unavoidable truncation, the timestamp format is second-resolution; to_timespec() is what <Tm as Ord> does
+            if file_time_modified_p(req_p).to_timespec().sec <= since.0.to_timespec().sec {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     fn handle_get_file_range(&self, req: &mut Request, req_p: PathBuf, range: headers::Range) -> IronResult<Response> {
         match range {
             headers::Range::Bytes(ref brs) => {
                 if brs.len() == 1 {
-                    let flen = file_length(&req_p.metadata().expect("Failed to get requested file metadata"), &req_p);
+                    let metadata = req_p.metadata().expect("Failed to get requested file metadata");
+                    let flen = file_length(&metadata, &req_p);
+
+                    let mut etag = file_etag(&metadata).into_bytes(); // normaletag+123-41231
+                    let _ = write!(&mut etag, "+{}", brs[0]);
+                    let etag = unsafe { String::from_utf8_unchecked(etag) };
+                    if HttpHandler::should_304_path(req, &req_p, &etag) {
+                        log!(self.log, "{:w$} Not Modified", "", w = self.remote_addresses(req).width());
+                        return Ok(Response::with((status::NotModified,
+                                                  (Header(headers::Server(USER_AGENT.into())),
+                                                   Header(headers::LastModified(headers::HttpDate(file_time_modified_p(&req_p)))),
+                                                   Header(headers::AcceptRanges(headers::RangeUnit::Bytes))),
+                                                  Header(headers::ETag(headers::EntityTag::strong(etag))))));
+                    }
+
                     match brs[0] {
                         // Cases where from is bigger than to are filtered out by iron so can never happen
-                        headers::ByteRangeSpec::FromTo(from, to) => self.handle_get_file_closed_range(req, req_p, from, to),
+                        headers::ByteRangeSpec::FromTo(from, to) => self.handle_get_file_closed_range(req, req_p, from, to, etag),
                         headers::ByteRangeSpec::AllFrom(from) => {
                             if flen < from {
-                                self.handle_get_file_empty_range(req, req_p, from, flen)
+                                self.handle_get_file_empty_range(req, req_p, from, flen, etag)
                             } else {
-                                self.handle_get_file_right_opened_range(req, req_p, from)
+                                self.handle_get_file_right_opened_range(req, req_p, from, etag)
                             }
                         }
                         headers::ByteRangeSpec::Last(from) => {
                             if flen < from {
-                                self.handle_get_file_empty_range(req, req_p, from, flen)
+                                self.handle_get_file_empty_range(req, req_p, from, flen, etag)
                             } else {
-                                self.handle_get_file_left_opened_range(req, req_p, from)
+                                self.handle_get_file_left_opened_range(req, req_p, from, etag)
                             }
                         }
                     }
@@ -451,7 +500,7 @@ impl HttpHandler {
         }
     }
 
-    fn handle_get_file_closed_range(&self, req: &mut Request, req_p: PathBuf, from: u64, to: u64) -> IronResult<Response> {
+    fn handle_get_file_closed_range(&self, req: &mut Request, req_p: PathBuf, from: u64, to: u64, etag: String) -> IronResult<Response> {
         let mime_type = self.guess_mime_type(&req_p);
         log!(self.log,
              "{} was served byte range {}-{} of file {magenta}{}{reset} as {blue}{}{reset}",
@@ -461,24 +510,24 @@ impl HttpHandler {
              req_p.display(),
              mime_type);
 
-        let mut buf = vec![0; (to + 1 - from) as usize];
         let mut f = File::open(&req_p).expect("Failed to open requested file");
         f.seek(SeekFrom::Start(from)).expect("Failed to seek requested file");
-        f.read_exact(&mut buf).expect("Failed to read requested file");
 
         Ok(Response::with((status::PartialContent,
-                           (Header(headers::Server(USER_AGENT.to_string())),
+                           (Header(headers::Server(USER_AGENT.into())),
                             Header(headers::LastModified(headers::HttpDate(file_time_modified_p(&req_p)))),
                             Header(headers::ContentRange(headers::ContentRangeSpec::Bytes {
                                 range: Some((from, to)),
                                 instance_length: Some(file_length(&f.metadata().expect("Failed to get requested file metadata"), &req_p)),
                             })),
-                            Header(headers::AcceptRanges(vec![headers::RangeUnit::Bytes]))),
-                           buf,
-                           mime_type)))
+                            Header(headers::ETag(headers::EntityTag::strong(etag))),
+                            Header(headers::AcceptRanges(headers::RangeUnit::Bytes))),
+                           f,
+                           mime_type,
+                           Header(headers::ContentLength(to + 1 - from)))))
     }
 
-    fn handle_get_file_right_opened_range(&self, req: &mut Request, req_p: PathBuf, from: u64) -> IronResult<Response> {
+    fn handle_get_file_right_opened_range(&self, req: &mut Request, req_p: PathBuf, from: u64, etag: String) -> IronResult<Response> {
         let mime_type = self.guess_mime_type(&req_p);
         log!(self.log,
              "{} was served file {magenta}{}{reset} from byte {} as {blue}{}{reset}",
@@ -487,11 +536,10 @@ impl HttpHandler {
              from,
              mime_type);
 
-        let flen = file_length(&req_p.metadata().expect("Failed to get requested file metadata"), &req_p);
-        self.handle_get_file_opened_range(req_p, SeekFrom::Start(from), from, flen - from, mime_type)
+        self.handle_get_file_opened_range(req_p, |flen| (SeekFrom::Start(from), from, flen - from), mime_type, etag)
     }
 
-    fn handle_get_file_left_opened_range(&self, req: &mut Request, req_p: PathBuf, from: u64) -> IronResult<Response> {
+    fn handle_get_file_left_opened_range(&self, req: &mut Request, req_p: PathBuf, from: u64, etag: String) -> IronResult<Response> {
         let mime_type = self.guess_mime_type(&req_p);
         log!(self.log,
              "{} was served last {} bytes of file {magenta}{}{reset} as {blue}{}{reset}",
@@ -500,41 +548,41 @@ impl HttpHandler {
              req_p.display(),
              mime_type);
 
-        let flen = file_length(&req_p.metadata().expect("Failed to get requested file metadata"), &req_p);
-        self.handle_get_file_opened_range(req_p, SeekFrom::End(-(from as i64)), flen - from, from, mime_type)
+        self.handle_get_file_opened_range(req_p, |flen| (SeekFrom::End(-(from as i64)), flen - from, from), mime_type, etag)
     }
 
-    fn handle_get_file_opened_range(&self, req_p: PathBuf, s: SeekFrom, b_from: u64, clen: u64, mt: Mime) -> IronResult<Response> {
+    fn handle_get_file_opened_range<F: FnOnce(u64) -> (SeekFrom, u64, u64)>(&self, req_p: PathBuf, cb: F, mt: Mime, etag: String) -> IronResult<Response> {
         let mut f = File::open(&req_p).expect("Failed to open requested file");
         let fmeta = f.metadata().expect("Failed to get requested file metadata");
         let flen = file_length(&fmeta, &req_p);
+        let (s, b_from, clen) = cb(flen);
         f.seek(s).expect("Failed to seek requested file");
 
         Ok(Response::with((status::PartialContent,
                            f,
-                           (Header(headers::Server(USER_AGENT.to_string())),
+                           (Header(headers::Server(USER_AGENT.into())),
                             Header(headers::LastModified(headers::HttpDate(file_time_modified(&fmeta)))),
                             Header(headers::ContentRange(headers::ContentRangeSpec::Bytes {
                                 range: Some((b_from, flen - 1)),
                                 instance_length: Some(flen),
                             })),
+                            Header(headers::ETag(headers::EntityTag::strong(etag))),
                             Header(headers::ContentLength(clen)),
-                            Header(headers::AcceptRanges(vec![headers::RangeUnit::Bytes]))),
+                            Header(headers::AcceptRanges(headers::RangeUnit::Bytes))),
                            mt)))
     }
 
     fn handle_invalid_range(&self, req: &mut Request, req_p: PathBuf, range: &headers::Range, reason: &str) -> IronResult<Response> {
         self.handle_generated_response_encoding(req,
                                                 status::RangeNotSatisfiable,
-                                                html_response(ERROR_HTML,
-                                                              &["416 Range Not Satisfiable",
-                                                                &format!("Requested range <samp>{}</samp> could not be fulfilled for file {}.",
-                                                                         range,
-                                                                         req_p.display()),
-                                                                reason]))
+                                                error_html("416 Range Not Satisfiable",
+                                                           format_args!("Requested range <samp>{}</samp> could not be fulfilled for file {}.",
+                                                                        range,
+                                                                        req_p.display()),
+                                                           reason))
     }
 
-    fn handle_get_file_empty_range(&self, req: &mut Request, req_p: PathBuf, from: u64, to: u64) -> IronResult<Response> {
+    fn handle_get_file_empty_range(&self, req: &mut Request, req_p: PathBuf, from: u64, to: u64, etag: String) -> IronResult<Response> {
         let mime_type = self.guess_mime_type(&req_p);
         log!(self.log,
              "{} was served an empty range from file {magenta}{}{reset} as {blue}{}{reset}",
@@ -543,13 +591,14 @@ impl HttpHandler {
              mime_type);
 
         Ok(Response::with((status::NoContent,
-                           Header(headers::Server(USER_AGENT.to_string())),
-                           Header(headers::LastModified(headers::HttpDate(file_time_modified_p(&req_p)))),
-                           Header(headers::ContentRange(headers::ContentRangeSpec::Bytes {
-                               range: Some((from, to)),
-                               instance_length: Some(file_length(&req_p.metadata().expect("Failed to get requested file metadata"), &req_p)),
-                           })),
-                           Header(headers::AcceptRanges(vec![headers::RangeUnit::Bytes])),
+                           (Header(headers::Server(USER_AGENT.into())),
+                            Header(headers::LastModified(headers::HttpDate(file_time_modified_p(&req_p)))),
+                            Header(headers::ContentRange(headers::ContentRangeSpec::Bytes {
+                                range: Some((from, to)),
+                                instance_length: Some(file_length(&req_p.metadata().expect("Failed to get requested file metadata"), &req_p)),
+                            }))),
+                           Header(headers::ETag(headers::EntityTag::strong(etag))),
+                           Header(headers::AcceptRanges(headers::RangeUnit::Bytes)),
                            mime_type)))
     }
 
@@ -562,110 +611,155 @@ impl HttpHandler {
              mime_type);
 
         let metadata = req_p.metadata().expect("Failed to get requested file metadata");
+        let etag = file_etag(&metadata);
+        let headers = (Header(headers::Server(USER_AGENT.into())),
+                       Header(headers::LastModified(headers::HttpDate(file_time_modified(&metadata)))),
+                       Header(headers::AcceptRanges(headers::RangeUnit::Bytes)));
+        if HttpHandler::should_304_path(req, &req_p, &etag) {
+            log!(self.log, "{:w$} Not Modified", "", w = self.remote_addresses(req).width());
+            return Ok(Response::with((status::NotModified, headers, Header(headers::ETag(headers::EntityTag::strong(etag))))));
+        }
+
         let flen = file_length(&metadata, &req_p);
         if self.encoded_temp_dir.is_some() && flen > MIN_ENCODING_SIZE && flen < MAX_ENCODING_SIZE &&
-           req_p.extension().and_then(|s| s.to_str()).map(|s| !BLACKLISTED_ENCODING_EXTENSIONS.contains(&UniCase::new(s))).unwrap_or(true) {
-            self.handle_get_file_encoded(req, req_p, mime_type)
+           req_p.extension().map(|s| !extension_is_blacklisted(s)).unwrap_or(true) {
+            self.handle_get_file_encoded(req, req_p, mime_type, headers, etag)
         } else {
             let file = match File::open(&req_p) {
                 Ok(file) => file,
                 Err(err) => return self.handle_requested_entity_unopenable(req, err, "file"),
             };
             Ok(Response::with((status::Ok,
-                               (Header(headers::Server(USER_AGENT.to_string())),
-                                Header(headers::LastModified(headers::HttpDate(file_time_modified(&metadata)))),
-                                Header(headers::AcceptRanges(vec![headers::RangeUnit::Bytes]))),
+                               headers,
+                               Header(headers::ETag(headers::EntityTag::strong(etag))),
                                file,
-                               Header(headers::ContentLength(file_length(&metadata, &req_p))),
-                               mime_type)))
+                               mime_type,
+                               Header(headers::ContentLength(file_length(&metadata, &req_p))))))
         }
     }
 
-    fn handle_get_file_encoded(&self, req: &mut Request, req_p: PathBuf, mt: Mime) -> IronResult<Response> {
+    fn handle_get_file_encoded(&self, req: &mut Request, req_p: PathBuf, mt: Mime,
+                               headers: (Header<headers::Server>, Header<headers::LastModified>, Header<headers::AcceptRanges>), etag: String)
+                               -> IronResult<Response> {
         if let Some(encoding) = req.headers.get_mut::<headers::AcceptEncoding>().and_then(|es| response_encoding(&mut **es)) {
             self.create_temp_dir(&self.encoded_temp_dir);
 
-            let cache_key = match file_hash(&req_p) {
-                Ok(h) => (h, encoding.to_string()),
-                Err(err) => return self.handle_requested_entity_unopenable(req, err, "file"),
-            };
-
-            {
-                match self.cache_fs.read().expect("Filesystem cache read lock poisoned").get(&cache_key) {
-                    Some(&(ref resp_p, true)) => {
-                        log!(self.log,
-                             "{} encoded as {} for {:.1}% ratio (cached)",
-                             Spaces(self.remote_addresses(req).to_string().len()),
-                             encoding,
-                             ((file_length(&req_p.metadata().expect("Failed to get requested file metadata"), &req_p) as f64) /
-                              (file_length(&resp_p.metadata().expect("Failed to get encoded file metadata"), &resp_p) as f64)) *
-                             100f64);
-
-                        return Ok(Response::with((status::Ok,
-                                                  Header(headers::Server(USER_AGENT.to_string())),
-                                                  Header(headers::ContentEncoding(vec![encoding])),
-                                                  Header(headers::AcceptRanges(vec![headers::RangeUnit::Bytes])),
-                                                  resp_p.as_path(),
-                                                  mt)));
+            let hash = self.cache_fs_files.read().expect("Filesystem file cache read lock poisoned").get(&etag).cloned();
+            let hash = match hash {
+                Some(hash) => hash,
+                None => {
+                    match file_hash(&req_p) {
+                        Ok(h) => {
+                            self.cache_fs_files.write().expect("Filesystem file cache write lock poisoned").insert(etag.clone(), h);
+                            h
+                        }
+                        Err(err) => return self.handle_requested_entity_unopenable(req, err, "file"),
                     }
-                    Some(&(ref resp_p, false)) => {
-                        return Ok(Response::with((status::Ok,
-                                                  Header(headers::Server(USER_AGENT.to_string())),
-                                                  Header(headers::LastModified(headers::HttpDate(file_time_modified_p(resp_p)))),
-                                                  Header(headers::AcceptRanges(vec![headers::RangeUnit::Bytes])),
-                                                  resp_p.as_path(),
-                                                  mt)));
-                    }
-                    None => (),
                 }
+            };
+            let cache_key = (hash, encoding.0);
+
+            let forgor = {
+                match self.cache_fs.read().expect("Filesystem cache read lock poisoned").get(&cache_key) {
+                    Some(&((ref resp_p, true, _), ref atime)) => {
+                        match File::open(resp_p) {
+                            Ok(resp) => {
+                                atime.store(precise_time_ns(), AtomicOrdering::Relaxed);
+                                log!(self.log,
+                                     "{:w$} encoded as {} for {:.1}% ratio (cached)",
+                                     "",
+                                     encoding,
+                                     ((file_length(&req_p.metadata().expect("Failed to get requested file metadata"), &req_p) as f64) /
+                                      (file_length(&resp.metadata().expect("Failed to get encoded file metadata"), &resp_p) as f64)) *
+                                     100f64,
+                                     w = self.remote_addresses(req).width());
+
+                                return Ok(Response::with((status::Ok,
+                                                          headers,
+                                                          Header(headers::ETag(headers::EntityTag::strong(etag))),
+                                                          Header(headers::ContentEncoding([encoding].into())),
+                                                          resp,
+                                                          mt)));
+                            },
+                            Err(err) if err.kind() == IoErrorKind::NotFound => true,
+                            e @ Err(_) => {
+                                e.expect("Failed to get encoded file metadata");
+                                unsafe { std::hint::unreachable_unchecked() }
+                            },
+                        }
+                    }
+                    Some(&((_, false, _), _)) => {
+                        let file = match File::open(&req_p) {
+                            Ok(file) => file,
+                            Err(err) => return self.handle_requested_entity_unopenable(req, err, "file"),
+                        };
+                        return Ok(Response::with((status::Ok, headers, Header(headers::ETag(headers::EntityTag::strong(etag))), file, mt)));
+                    }
+                    None => false,
+                }
+            };
+            if forgor {
+                self.cache_fs_files.write().expect("Filesystem file cache write lock poisoned").retain(|_, v| *v == hash);
+                self.cache_fs.write().expect("Filesystem cache write lock poisoned").remove(&cache_key);
+                return self.handle_get_file_encoded(req, req_p, mt, headers, etag)
             }
 
             let mut resp_p = self.encoded_temp_dir.as_ref().unwrap().1.join(cache_key.0.to_hex().as_str());
             match (req_p.extension(), encoding_extension(&encoding)) {
-                (Some(ext), Some(enc)) => resp_p.set_extension(format!("{}.{}", ext.to_str().unwrap_or("ext"), enc)),
-                (Some(ext), None) => resp_p.set_extension(format!("{}.{}", ext.to_str().unwrap_or("ext"), encoding)),
+                (Some(ext), Some(enc)) => {
+                    let mut new_ext = ext.as_encoded_bytes().to_vec();
+                    new_ext.push(b'.');
+                    new_ext.extend_from_slice(enc.as_bytes());
+                    resp_p.set_extension(unsafe { OsStr::from_encoded_bytes_unchecked(&new_ext) })
+                }
                 (None, Some(enc)) => resp_p.set_extension(enc),
-                (None, None) => resp_p.set_extension(format!("{}", encoding)),
+                (_, None) => unsafe { std::hint::unreachable_unchecked() },
             };
 
             if encode_file(&req_p, &resp_p, &encoding) {
-                let gain = (file_length(&req_p.metadata().expect("Failed to get requested file metadata"), &req_p) as f64) /
-                           (file_length(&resp_p.metadata().expect("Failed to get encoded file metadata"), &resp_p) as f64);
-                if gain < MIN_ENCODING_GAIN {
+                let resp_p_len = file_length(&resp_p.metadata().expect("Failed to get encoded file metadata"), &resp_p);
+                let gain = (file_length(&req_p.metadata().expect("Failed to get requested file metadata"), &req_p) as f64) / (resp_p_len as f64);
+                if gain < MIN_ENCODING_GAIN || resp_p_len > self.encoded_filesystem_limit {
                     let mut cache = self.cache_fs.write().expect("Filesystem cache write lock poisoned");
-                    cache.insert(cache_key, (req_p.clone(), false));
+                    cache.insert(cache_key, ((PathBuf::new(), false, 0), AtomicU64::new(u64::MAX)));
                     fs::remove_file(resp_p).expect("Failed to remove too big encoded file");
                 } else {
                     log!(self.log,
-                         "{} encoded as {} for {:.1}% ratio",
-                         Spaces(self.remote_addresses(req).to_string().len()),
+                         "{:w$} encoded as {} for {:.1}% ratio",
+                         "",
                          encoding,
-                         gain * 100f64);
+                         gain * 100f64,
+                         w = self.remote_addresses(req).width());
 
                     let mut cache = self.cache_fs.write().expect("Filesystem cache write lock poisoned");
-                    cache.insert(cache_key, (resp_p.clone(), true));
+                    self.cache_fs_size.fetch_add(resp_p_len, AtomicOrdering::Relaxed);
+                    cache.insert(cache_key, ((resp_p.clone(), true, resp_p_len), AtomicU64::new(precise_time_ns())));
 
                     return Ok(Response::with((status::Ok,
-                                              Header(headers::Server(USER_AGENT.to_string())),
-                                              Header(headers::ContentEncoding(vec![encoding])),
-                                              Header(headers::AcceptRanges(vec![headers::RangeUnit::Bytes])),
+                                              headers,
+                                              Header(headers::ETag(headers::EntityTag::strong(etag))),
+                                              Header(headers::ContentEncoding([encoding].into())),
                                               resp_p.as_path(),
                                               mt)));
                 }
             } else {
                 log!(self.log,
-                     "{} failed to encode as {}, sending identity",
-                     Spaces(self.remote_addresses(req).to_string().len()),
-                     encoding);
+                     "{:w$} failed to encode as {}, sending identity",
+                     "",
+                     encoding,
+                     w = self.remote_addresses(req).width());
             }
         }
 
+        let file = match File::open(&req_p) {
+            Ok(file) => file,
+            Err(err) => return self.handle_requested_entity_unopenable(req, err, "file"),
+        };
         Ok(Response::with((status::Ok,
-                           (Header(headers::Server(USER_AGENT.to_string())),
-                            Header(headers::LastModified(headers::HttpDate(file_time_modified_p(&req_p)))),
-                            Header(headers::AcceptRanges(vec![headers::RangeUnit::Bytes]))),
-                           req_p.as_path(),
-                           Header(headers::ContentLength(file_length(&req_p.metadata().expect("Failed to get requested file metadata"), &req_p))),
+                           headers,
+                           Header(headers::ETag(headers::EntityTag::strong(etag))),
+                           Header(headers::ContentLength(file_length(&file.metadata().expect("Failed to get requested file metadata"), &req_p))),
+                           file,
                            mt)))
     }
 
@@ -698,7 +792,7 @@ impl HttpHandler {
                         get_raw_fs_metadata(f.path())
                     } else {
                         RawFileData {
-                            mime_type: "text/directory".parse().unwrap(),
+                            mime_type: Mime(MimeTopLevel::Text, MimeSubLevel::Ext("directory".to_string()), Default::default()), // text/directory
                             name: f.file_name().into_string().expect("Failed to get file name"),
                             last_modified: file_time_modified_p(&f.path()),
                             size: 0,
@@ -723,9 +817,10 @@ impl HttpHandler {
                 if req.url.as_ref().path_segments().unwrap().next_back() == Some("") {
                     let r = self.handle_get_file(req, idx);
                     log!(self.log,
-                         "{} found index file for directory {magenta}{}{reset}",
-                         Spaces(self.remote_addresses(req).to_string().len()),
-                         req_p.display());
+                         "{:w$} found index file for directory {magenta}{}{reset}",
+                         "",
+                         req_p.display(),
+                         w = self.remote_addresses(req).width());
                     return r;
                 } else {
                     return self.handle_get_dir_index_no_slash(req, e);
@@ -781,233 +876,279 @@ impl HttpHandler {
         //     https://cloud.githubusercontent.com/assets/6709544/21442017/9eb20d64-c89b-11e6-8c7b-888b5f70a403.png
         //   - With following slash:
         //     https://cloud.githubusercontent.com/assets/6709544/21442028/a50918c4-c89b-11e6-8936-c29896947f6a.png
-        Ok(Response::with((status::SeeOther, Header(headers::Server(USER_AGENT.to_string())), Header(headers::Location(new_url)))))
+        Ok(Response::with((status::SeeOther, Header(headers::Server(USER_AGENT.into())), Header(headers::Location(new_url)))))
     }
 
     fn handle_get_mobile_dir_listing(&self, req: &mut Request, req_p: PathBuf) -> IronResult<Response> {
-        let relpath = (url_path(&req.url) + "/").replace("//", "/");
-        let is_root = req.url.as_ref().path_segments().unwrap().count() + !req.url.as_ref().as_str().ends_with('/') as usize == 1;
+        let relpath = url_path(&req.url);
+        let is_root = relpath == "/";
+        let mut relpath_escaped = escape_specials(&relpath);
+        if relpath_escaped.as_bytes().last() != Some(&b'/') {
+            relpath_escaped.to_mut().push('/');
+        }
         let show_file_management_controls = self.writes_temp_dir.is_some();
         log!(self.log,
              "{} was served mobile directory listing for {magenta}{}{reset}",
              self.remote_addresses(&req),
              req_p.display());
 
-        let parent_s = if is_root {
-            String::new()
-        } else {
-            let rel_noslash = &relpath[0..relpath.len() - 1];
-            let slash_idx = rel_noslash.rfind('/');
-            format!("<a href=\"/{up_path}{up_path_slash}\" class=\"list entry top\"><span class=\"back_arrow_icon\">Parent directory</span></a> \
-                     <a href=\"/{up_path}{up_path_slash}\" class=\"list entry bottom\"><span class=\"marker\">@</span>\
-                       <span class=\"datetime\">{} UTC</span></a>",
-                    file_time_modified_p(req_p.parent().unwrap_or(&req_p))
-                        .strftime("%F %T")
-                        .unwrap(),
-                    up_path = escape_specials(slash_idx.map(|i| &rel_noslash[0..i]).unwrap_or("")),
-                    up_path_slash = if slash_idx.is_some() { "/" } else { "" })
+        let parent_f = |out: &mut Vec<u8>| if !is_root {
+            let mut parentpath = relpath_escaped.as_bytes();
+            while parentpath.last() == Some(&b'/') {
+                parentpath = &parentpath[0..parentpath.len() - 1];
+            }
+            while parentpath.last() != Some(&b'/') {
+                parentpath = &parentpath[0..parentpath.len() - 1];
+            }
+            let modified = file_time_modified_p(req_p.parent().unwrap_or(&req_p));
+            let modified_ts = modified.to_timespec();
+            let _ = write!(out,
+                       r#"<a href="{up_path}" id=".."><div><span class="back_arrow_icon">Parent directory</span></div><div><time ms={}{:03}>{} UTC</time></div></a>"#,
+                       modified_ts.sec,
+                       modified_ts.nsec / 1000_000,
+                       modified.strftime("%F %T").unwrap(),
+                       up_path = unsafe { str::from_utf8_unchecked(parentpath) });
         };
-        let list_s = req_p.read_dir()
-            .expect("Failed to read requested directory")
-            .map(|p| p.expect("Failed to iterate over requested directory"))
-            .filter(|f| {
-                let fp = f.path();
-                let mut symlink = false;
-                !((!self.follow_symlinks &&
-                   {
-                    symlink = is_symlink(&fp);
-                    symlink
-                }) || (self.follow_symlinks && self.sandbox_symlinks && symlink && !is_descendant_of(fp, &self.hosted_directory.1)))
-            })
-            .sorted_by(|lhs, rhs| {
+        let list_f = |out: &mut Vec<u8>| {
+            let mut list = req_p.read_dir()
+                .expect("Failed to read requested directory")
+                .map(|p| p.expect("Failed to iterate over requested directory"))
+                .filter(|f| {
+                    let fp = f.path();
+                    let mut symlink = false;
+                    !((!self.follow_symlinks &&
+                       {
+                        symlink = is_symlink(&fp);
+                        symlink
+                    }) || (self.follow_symlinks && self.sandbox_symlinks && symlink && !is_descendant_of(fp, &self.hosted_directory.1)))
+                })
+                .collect::<Vec<_>>();
+            list.sort_by(|lhs, rhs| {
                 (is_actually_file(&lhs.file_type().expect("Failed to get file type"), &lhs.path()),
                  lhs.file_name().to_str().expect("Failed to get file name").to_lowercase())
                     .cmp(&(is_actually_file(&rhs.file_type().expect("Failed to get file type"), &rhs.path()),
                            rhs.file_name().to_str().expect("Failed to get file name").to_lowercase()))
-            })
-            .fold("".to_string(), |cur, f| {
+            });
+            for f in list {
                 let is_file = is_actually_file(&f.file_type().expect("Failed to get file type"), &f.path());
                 let fmeta = f.metadata().expect("Failed to get requested file metadata");
                 let fname = f.file_name().into_string().expect("Failed to get file name");
                 let path = f.path();
+                let modified = file_time_modified(&fmeta);
+                let modified_ts = modified.to_timespec();
 
-                format!("{}<a href=\"{path}{fname}\" class=\"list entry top\"><span class=\"{}{}_icon\" id=\"{}\">{}{}</span>{}</a> \
-                           <a href=\"{path}{fname}\" class=\"list entry bottom\"><span class=\"marker\">@</span><span class=\"datetime\">{} UTC</span>{}</a>\n",
-                        cur,
-                        if is_file { "file" } else { "dir" },
-                        file_icon_suffix(&path, is_file),
-                        path.file_name().map(|p| p.to_str().expect("Filename not UTF-8").replace('.', "_")).as_ref().unwrap_or(&fname),
-                        fname.replace('&', "&amp;").replace('<', "&lt;"),
-                        if is_file { "" } else { "/" },
-                        if show_file_management_controls {
-                            DisplayThree("<span class=\"manage\"><span class=\"delete_file_icon\">Delete</span>",
-                                         if self.webdav {
-                                             " <span class=\"rename_icon\">Rename</span>"
-                                         } else {
-                                             ""
-                                         },
-                                         "</span>")
-                        } else {
-                            DisplayThree("", "", "")
-                        },
-                        file_time_modified(&fmeta).strftime("%F %T").unwrap(),
-                        if is_file {
-                            DisplayThree("<span class=\"size\">", human_readable_size(file_length(&fmeta, &path)), "</span>")
-                        } else {
-                            DisplayThree("", String::new(), "")
-                        },
-                        path = escape_specials(format!("/{}", relpath).replace("//", "/")),
-                        fname = encode_tail_if_trimmed(escape_specials(&fname)))
-            });
+                let _ = writeln!(out,
+                                 concat!(r#"<a href="{path}{fname}" id="{}"><div><span class="{}{}_icon">{}{}</span>{}</div>"#,
+                                         r#"<div><time ms={}{:03}>{} UTC</time>{}</div></a>"#),
+                                 NoDoubleQuotes(&fname),
+                                 if is_file { "file" } else { "dir" },
+                                 file_icon_suffix(&path, is_file),
+                                 NoHtmlLiteral(&fname),
+                                 if is_file { "" } else { "/" },
+                                 if show_file_management_controls {
+                                     DisplayThree(r#"<span class="manage"><span class="delete_file_icon" onclick="delete_onclick(arguments[0])">Delete</span>"#,
+                                                  if self.webdav {
+                                                      r#" <span class="rename_icon" onclick="rename_onclick(arguments[0])">Rename</span>"#
+                                                  } else {
+                                                      ""
+                                                  },
+                                                  "</span>")
+                                 } else {
+                                     DisplayThree("", "", "")
+                                 },
+                                 modified_ts.sec,
+                                 modified_ts.nsec / 1000_000,
+                                 modified.strftime("%F %T").unwrap(),
+                                 if is_file {
+                                     DisplayThree("<span class=\"size\">", Maybe(Some(HumanReadableSize(file_length(&fmeta, &path)))), "</span>")
+                                 } else {
+                                     DisplayThree("", Maybe(None), "")
+                                 },
+                                 path = relpath_escaped,
+                                 fname = encode_tail_if_trimmed(escape_specials(&fname)));
+            }
+        };
 
         self.handle_generated_response_encoding(req,
                                                 status::Ok,
-                                                html_response(MOBILE_DIRECTORY_LISTING_HTML,
-                                                              &[&relpath[..],
-                                                                if is_root { "" } else { "/" },
-                                                                if show_file_management_controls {
-                                                                    r#"<script type="text/javascript">{upload}{manage_mobile}{manage}</script>"#
-                                                                } else {
-                                                                    ""
-                                                                },
-                                                                &parent_s[..],
-                                                                &list_s[..],
-                                                                if show_file_management_controls {
-                                                                    "<span class=\"list heading top top-border bottom\"> \
-                                                                       Upload files: <input id=\"file_upload\" type=\"file\" multiple /> \
-                                                                     </span>"
-                                                                } else {
-                                                                    ""
-                                                                },
-                                                                if show_file_management_controls && self.webdav {
-                                                                    "<a id=\"new_directory\" href=\"#new_directory\" class=\"list entry top bottom\">
-                                                                         <span class=\"new_dir_icon\">Create directory</span></a>"
-                                                                } else {
-                                                                    ""
-                                                                }]))
+                                                directory_listing_mobile_html(&relpath_escaped[!is_root as usize..],
+                                                                              if show_file_management_controls {
+                                                                                  concat!(r#"<script>"#, include_str!(concat!(env!("OUT_DIR"), "/assets/upload.js")))
+                                                                              } else {
+                                                                                  ""
+                                                                              },
+                                                                              if show_file_management_controls {
+                                                                                  include_str!(concat!(env!("OUT_DIR"), "/assets/manage_mobile.js"))
+                                                                              } else {
+                                                                                  ""
+                                                                              },
+                                                                              if show_file_management_controls {
+                                                                                  concat!(include_str!(concat!(env!("OUT_DIR"), "/assets/manage.js")), r#"</script>"#)
+                                                                              } else {
+                                                                                  ""
+                                                                              },
+                                                                              parent_f,
+                                                                              list_f,
+                                                                              if show_file_management_controls {
+                                                                                  concat!(r#"<span class="heading">Upload files: "#,
+                                                                                          r#"<input type="file" multiple /></span>"#)
+                                                                              } else {
+                                                                                  ""
+                                                                              },
+                                                                              if show_file_management_controls && self.webdav {
+                                                                                  r#"<a id='new"directory' href><span class="new_dir_icon">Create directory</span></a>"#
+                                                                              } else {
+                                                                                  ""
+                                                                              }))
     }
 
     fn handle_get_dir_listing(&self, req: &mut Request, req_p: PathBuf) -> IronResult<Response> {
-        let relpath = (url_path(&req.url) + "/").replace("//", "/");
-        let is_root = req.url.as_ref().path_segments().unwrap().count() + !req.url.as_ref().as_str().ends_with('/') as usize == 1;
+        let relpath = url_path(&req.url);
+        let is_root = relpath == "/";
+        let mut relpath_escaped = escape_specials(&relpath);
+        if relpath_escaped.as_bytes().last() != Some(&b'/') {
+            relpath_escaped.to_mut().push('/');
+        }
         let show_file_management_controls = self.writes_temp_dir.is_some();
         log!(self.log,
              "{} was served directory listing for {magenta}{}{reset}",
              self.remote_addresses(&req),
              req_p.display());
 
-        let parent_s = if is_root {
-            String::new()
-        } else {
-            let rel_noslash = &relpath[0..relpath.len() - 1];
-            let slash_idx = rel_noslash.rfind('/');
-            format!("<tr><td><a href=\"/{up_path}{up_path_slash}\" id=\"parent_dir\" class=\"back_arrow_icon\"></a></td> \
-                         <td><a href=\"/{up_path}{up_path_slash}\">Parent directory</a></td> \
-                         <td><a href=\"/{up_path}{up_path_slash}\" class=\"datetime\">{}</a></td> \
-                         <td><a href=\"/{up_path}{up_path_slash}\">&nbsp;</a></td> \
-                         <td><a href=\"/{up_path}{up_path_slash}\">&nbsp;</a></td></tr>",
-                    file_time_modified_p(req_p.parent().unwrap_or(&req_p)).strftime("%F %T").unwrap(),
-                    up_path = escape_specials(slash_idx.map(|i| &rel_noslash[0..i]).unwrap_or("")),
-                    up_path_slash = if slash_idx.is_some() { "/" } else { "" })
+        let parent_f = |out: &mut Vec<u8>| if !is_root {
+            let mut parentpath = relpath_escaped.as_bytes();
+            while parentpath.last() == Some(&b'/') {
+                parentpath = &parentpath[0..parentpath.len() - 1];
+            }
+            while parentpath.last() != Some(&b'/') {
+                parentpath = &parentpath[0..parentpath.len() - 1];
+            }
+            let modified = file_time_modified_p(req_p.parent().unwrap_or(&req_p));
+            let modified_ts = modified.to_timespec();
+            let _ = write!(out,
+                           "<tr id=\"..\"><td><a href=\"{up_path}\" tabindex=\"-1\" class=\"back_arrow_icon\"></a></td> <td><a \
+                            href=\"{up_path}\">Parent directory</a></td> <td><a href=\"{up_path}\" tabindex=\"-1\"><time ms={}{:03}>{}</time></a></td> \
+                            <td><a href=\"{up_path}\" tabindex=\"-1\">&nbsp;</a></td> <td><a href=\"{up_path}\" tabindex=\"-1\">&nbsp;</a></td></tr>",
+                           modified_ts.sec,
+                           modified_ts.nsec / 1000_000,
+                           modified.strftime("%F %T").unwrap(),
+                           up_path = unsafe { str::from_utf8_unchecked(parentpath) });
         };
-
 
         let rd = match req_p.read_dir() {
             Ok(rd) => rd,
             Err(err) => return self.handle_requested_entity_unopenable(req, err, "directory"),
         };
-        let list_s = rd.map(|p| p.expect("Failed to iterate over requested directory"))
-            .filter(|f| {
-                let fp = f.path();
-                let mut symlink = false;
-                !((!self.follow_symlinks &&
-                   {
-                    symlink = is_symlink(&fp);
-                    symlink
-                }) || (self.follow_symlinks && self.sandbox_symlinks && symlink && !is_descendant_of(fp, &self.hosted_directory.1)))
-            })
-            .sorted_by(|lhs, rhs| {
+        let list_f = |out: &mut Vec<u8>| {
+            let mut list = rd.map(|p| p.expect("Failed to iterate over requested directory"))
+                .filter(|f| {
+                    let fp = f.path();
+                    let mut symlink = false;
+                    !((!self.follow_symlinks &&
+                       {
+                        symlink = is_symlink(&fp);
+                        symlink
+                    }) || (self.follow_symlinks && self.sandbox_symlinks && symlink && !is_descendant_of(fp, &self.hosted_directory.1)))
+                })
+                .collect::<Vec<_>>();
+            list.sort_by(|lhs, rhs| {
                 (is_actually_file(&lhs.file_type().expect("Failed to get file type"), &lhs.path()),
                  lhs.file_name().to_str().expect("Failed to get file name").to_lowercase())
                     .cmp(&(is_actually_file(&rhs.file_type().expect("Failed to get file type"), &rhs.path()),
                            rhs.file_name().to_str().expect("Failed to get file name").to_lowercase()))
-            })
-            .fold("".to_string(), |cur, f| {
-                let is_file = is_actually_file(&f.file_type().expect("Failed to get file type"), &f.path());
+            });
+            for f in list {
+                let path = f.path();
+                let is_file = is_actually_file(&f.file_type().expect("Failed to get file type"), &path);
                 let fmeta = f.metadata().expect("Failed to get requested file metadata");
                 let fname = f.file_name().into_string().expect("Failed to get file name");
-                let path = f.path();
                 let len = file_length(&fmeta, &path);
+                let modified = file_time_modified(&fmeta);
+                let modified_ts = modified.to_timespec();
+                struct FileSizeDisplay(bool, u64);
+                impl fmt::Display for FileSizeDisplay {
+                    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+                        if self.0 {
+                            write!(f, "<abbr title=\"{} B\">", self.1)
+                        } else {
+                            f.write_str("&nbsp;")
+                        }
+                    }
+                }
 
-                format!("{}<tr><td><a href=\"{path}{fname}\" id=\"{}\" class=\"{}{}_icon\"></a></td> \
-                               <td><a href=\"{path}{fname}\">{}{}</a></td> <td><a href=\"{path}{fname}\" class=\"datetime\">{}</a></td> \
-                               <td><a href=\"{path}{fname}\">{}{}{}</a></td> {}</tr>\n",
-                        cur,
-                        path.file_name().map(|p| p.to_str().expect("Filename not UTF-8").replace('.', "_")).as_ref().unwrap_or(&fname),
-                        if is_file { "file" } else { "dir" },
-                        file_icon_suffix(&path, is_file),
-                        fname.replace('&', "&amp;").replace('<', "&lt;"),
-                        if is_file { "" } else { "/" },
-                        file_time_modified(&fmeta).strftime("%F %T").unwrap(),
-                        if is_file {
-                            DisplayThree("<abbr title=\"", len.to_string(), " B\">")
-                        } else {
-                            DisplayThree("&nbsp;", String::new(), "")
-                        },
-                        if is_file {
-                            human_readable_size(len)
-                        } else {
-                            String::new()
-                        },
-                        if is_file { "</abbr>" } else { "" },
-                        if show_file_management_controls {
-                            DisplayThree("<td><a href=\"#delete_file\" class=\"delete_file_icon\">Delete</a>",
-                                         if self.webdav {
-                                             " <a href=\"#rename\" class=\"rename_icon\">Rename</a>"
-                                         } else {
-                                             ""
-                                         },
-                                         "</td>")
-                        } else {
-                            DisplayThree("", "", "")
-                        },
-                        path = escape_specials(format!("/{}", relpath).replace("//", "/")),
-                        fname = encode_tail_if_trimmed(escape_specials(&fname)))
-            });
+                let _ = write!(out,
+                               "<tr id=\"{}\"><td><a href=\"{path}{fname}\" tabindex=\"-1\" class=\"{}{}_icon\"></a></td> <td><a \
+                                href=\"{path}{fname}\">{}{}</a></td> <td><a href=\"{path}{fname}\" tabindex=\"-1\"><time ms={}{:03}>{}</time></a></td> \
+                                <td><a href=\"{path}{fname}\" tabindex=\"-1\">{}{}{}</a></td> {}</tr>\n",
+                               NoDoubleQuotes(&fname),
+                               if is_file { "file" } else { "dir" },
+                               file_icon_suffix(&path, is_file),
+                               NoHtmlLiteral(&fname),
+                               if is_file { "" } else { "/" },
+                               modified_ts.sec,
+                               modified_ts.nsec / 1000_000,
+                               modified.strftime("%F %T").unwrap(),
+                               FileSizeDisplay(is_file, len),
+                               if is_file {
+                                   Maybe(Some(HumanReadableSize(len)))
+                               } else {
+                                   Maybe(None)
+                               },
+                               if is_file { "</abbr>" } else { "" },
+                               if show_file_management_controls {
+                                   DisplayThree("<td><a href class=\"delete_file_icon\" onclick=\"delete_onclick(arguments[0])\">Delete</a>",
+                                                if self.webdav {
+                                                    " <a href class=\"rename_icon\" onclick=\"rename_onclick(arguments[0])\">Rename</a>"
+                                                } else {
+                                                    ""
+                                                },
+                                                "</td>")
+                               } else {
+                                   DisplayThree("", "", "")
+                               },
+                               path = relpath_escaped,
+                               fname = encode_tail_if_trimmed(escape_specials(&fname)));
+            }
+        };
 
         self.handle_generated_response_encoding(req,
                                                 status::Ok,
-                                                html_response(DIRECTORY_LISTING_HTML,
-                                                              &[&relpath[..],
-                                                                if show_file_management_controls {
-                                                                    r#"<script type="text/javascript">{upload}{manage_desktop}{manage}</script>"#
-                                                                } else {
-                                                                    ""
-                                                                },
-                                                                &parent_s[..],
-                                                                &list_s[..],
-                                                                if show_file_management_controls {
-                                                                    "<hr /> \
-                                                                     <p> \
-                                                                       Drag&amp;Drop to upload or <input id=\"file_upload\" type=\"file\" multiple />. \
-                                                                     </p>"
-                                                                } else {
-                                                                    ""
-                                                                },
-                                                                if show_file_management_controls {
-                                                                    "<th>Manage</th>"
-                                                                } else {
-                                                                    ""
-                                                                },
-                                                                if show_file_management_controls && self.webdav {
-                                                                    "<tr id=\"new_directory\"><td><a href=\"#new_directory\" class=\"new_dir_icon\"></a></td> \
-                                                                                              <td><a href=\"#new_directory\">Create directory</a></td> \
-                                                                                              <td><a href=\"#new_directory\">&nbsp;</a></td> \
-                                                                                              <td><a href=\"#new_directory\">&nbsp;</a></td> \
-                                                                                              <td><a href=\"#new_directory\">&nbsp;</a></td></tr>"
-                                                                } else {
-                                                                    ""
-                                                                }]))
+                                                directory_listing_html(&relpath_escaped[!is_root as usize..],
+                                                                       if show_file_management_controls {
+                                                                           concat!(r#"<script>"#, include_str!(concat!(env!("OUT_DIR"), "/assets/upload.js")))
+                                                                       } else {
+                                                                           ""
+                                                                       },
+                                                                       if show_file_management_controls {
+                                                                           include_str!(concat!(env!("OUT_DIR"), "/assets/manage_desktop.js"))
+                                                                       } else {
+                                                                           ""
+                                                                       },
+                                                                       if show_file_management_controls {
+                                                                           concat!(include_str!(concat!(env!("OUT_DIR"), "/assets/manage.js")), r#"</script>"#)
+                                                                       } else {
+                                                                           ""
+                                                                       },
+                                                                       parent_f,
+                                                                       list_f,
+                                                                       if show_file_management_controls {
+                                                                           "<hr />\
+                                                                            <p>Drag&amp;Drop to upload or <input type=\"file\" multiple />.</p>"
+                                                                       } else {
+                                                                           ""
+                                                                       },
+                                                                       if show_file_management_controls {
+                                                                           "<th>Manage</th>"
+                                                                       } else {
+                                                                           ""
+                                                                       },
+                                                                       if show_file_management_controls && self.webdav {
+                                                                           "<tr id=\'new\"directory\'><td><a tabindex=\"-1\" href class=\"new_dir_icon\"></a></td>\
+                                                                                                      <td colspan=3><a href>Create directory</a></td>\
+                                                                                                      <td><a tabindex=\"-1\" href>&nbsp;</a></td></tr>"
+                                                                       } else {
+                                                                           ""
+                                                                       }))
     }
 
     fn handle_put(&self, req: &mut Request) -> IronResult<Response> {
@@ -1020,58 +1161,36 @@ impl HttpHandler {
         if url_err {
             self.handle_invalid_url(req, "<p>Percent-encoding decoded to invalid UTF-8.</p>")
         } else if req_p.is_dir() {
-            self.handle_disallowed_method(req,
-                                          &[&[method::Options, method::Get, method::Delete, method::Head, method::Trace],
-                                            if self.webdav {
-                                                &DAV_LEVEL_1_METHODS[..]
-                                            } else {
-                                                &[]
-                                            }],
-                                          "directory")
+            self.handle_disallowed_method(req, "directory")
         } else if detect_file_as_dir(&req_p) {
             self.handle_invalid_url(req, "<p>Attempted to use file as directory.</p>")
         } else if req.headers.has::<headers::ContentRange>() {
             self.handle_put_partial_content(req)
-        } else if (symlink && !self.follow_symlinks) ||
-                  (symlink && self.follow_symlinks && self.sandbox_symlinks && !is_nonexistent_descendant_of(&req_p, &self.hosted_directory.1)) {
-            self.create_temp_dir(&self.writes_temp_dir);
-            self.handle_put_file(req, req_p, false)
         } else {
-            self.create_temp_dir(&self.writes_temp_dir);
-            self.handle_put_file(req, req_p, true)
+            let illegal = (symlink && !self.follow_symlinks) ||
+                          (symlink && self.follow_symlinks && self.sandbox_symlinks && !is_nonexistent_descendant_of(&req_p, &self.hosted_directory.1));
+            if illegal {
+                return self.handle_nonexistent(req, req_p);
+            }
+            self.handle_put_file(req, req_p)
         }
     }
 
-    fn handle_disallowed_method(&self, req: &mut Request, allowed: &[&[method::Method]], tpe: &str) -> IronResult<Response> {
-        let allowed_s = allowed.iter()
-            .flat_map(|mms| mms.iter())
-            .enumerate()
-            .fold("".to_string(), |cur, (i, m)| {
-                cur + &m.to_string() +
-                if i == allowed.len() - 2 {
-                    ", and "
-                } else if i == allowed.len() - 1 {
-                    ""
-                } else {
-                    ", "
-                }
-            })
-            .to_string();
-
+    fn handle_disallowed_method(&self, req: &mut Request, tpe: &str) -> IronResult<Response> {
         log!(self.log,
              "{} tried to {red}{}{reset} on {magenta}{}{reset} ({blue}{}{reset}) but only {red}{}{reset} are allowed",
              self.remote_addresses(&req),
              req.method,
              url_path(&req.url),
              tpe,
-             allowed_s);
+             CommaList(self.allowed_methods.iter()));
 
-        let resp_text =
-            html_response(ERROR_HTML,
-                          &["405 Method Not Allowed", &format!("Can't {} on a {}.", req.method, tpe), &format!("<p>Allowed methods: {}</p>", allowed_s)]);
+        let resp_text = error_html("405 Method Not Allowed",
+                                   format_args!("Can't {} on a {}.", req.method, tpe),
+                                   format_args!("<p>Allowed methods: {}</p>", CommaList(self.allowed_methods.iter())));
         self.handle_generated_response_encoding(req, status::MethodNotAllowed, resp_text)
             .map(|mut r| {
-                r.headers.set(headers::Allow(allowed.iter().flat_map(|mms| mms.iter()).cloned().collect()));
+                r.headers.set(headers::Allow(self.allowed_methods.into()));
                 r
             })
     }
@@ -1084,44 +1203,89 @@ impl HttpHandler {
 
         self.handle_generated_response_encoding(req,
                                                 status::BadRequest,
-                                                html_response(ERROR_HTML,
-                                                              &["400 Bad Request",
-                                                                "<a href=\"https://tools.ietf.org/html/rfc7231#section-4.3.3\">RFC7231 forbids \
-                                                                 partial-content PUT requests.</a>",
-                                                                ""]))
+                                                error_html("400 Bad Request",
+                                                           "<a href=\"https://tools.ietf.org/html/rfc7231#section-4.3.3\">RFC7231 forbids partial-content \
+                                                            PUT requests.</a>",
+                                                           ""))
     }
 
-    fn handle_put_file(&self, req: &mut Request, req_p: PathBuf, legal: bool) -> IronResult<Response> {
-        let existent = !legal || req_p.exists();
+    fn handle_put_file(&self, req: &mut Request, req_p: PathBuf) -> IronResult<Response> {
+        let _ = fs::create_dir_all(req_p.parent().expect("Failed to get requested file's parent directory"));
+        let direct_output = File::create_new(&req_p);
+
+        let existent = direct_output.is_err();
+        let mtime = req.headers.get::<XLastModified>().map(|xlm| xlm.0).or_else(|| req.headers.get::<XOcMTime>().map(|xocmt| xocmt.0 * 1000));
         log!(self.log,
-             "{} {} {magenta}{}{reset}, size: {}B",
+             "{} {} {magenta}{}{reset}, size: {}B{}{}",
              self.remote_addresses(&req),
-             if !legal {
-                 "tried to illegally create"
-             } else if existent {
-                 "replaced"
-             } else {
-                 "created"
-             },
+             if existent { "replaced" } else { "created" },
              req_p.display(),
-             *req.headers.get::<headers::ContentLength>().expect("No Content-Length header"));
+             *req.headers.get::<headers::ContentLength>().expect("No Content-Length header"),
+             mtime.map_or("", |_| ". modified: "),
+             Maybe(mtime.map(MsAsS)));
 
-        let &(_, ref temp_dir) = self.writes_temp_dir.as_ref().unwrap();
-        let temp_file_p = temp_dir.join(req_p.file_name().expect("Failed to get requested file's filename"));
+        let mut ibuf = BufReader::with_capacity(1024 * 1024, &mut req.body);
+        let file = match direct_output {
+            Ok(mut file) => {
+                if let Err(err) = io::copy(&mut ibuf, &mut file) {
+                    drop(file);
+                    fs::remove_file(&req_p).expect("Failed to remove requested file after failure");
+                    let _ = io::copy(&mut ibuf, &mut io::sink());
+                    return self.handle_put_error(req, "File not created.", err);
+                }
 
-        io::copy(&mut req.body, &mut File::create(&temp_file_p).expect("Failed to create temp file"))
-            .expect("Failed to write requested data to requested file");
-        if legal {
-            let _ = fs::create_dir_all(req_p.parent().expect("Failed to get requested file's parent directory"));
-            fs::copy(&temp_file_p, req_p).expect("Failed to copy temp file to requested file");
+                file
+            }
+            Err(_) => {
+                self.create_temp_dir(&self.writes_temp_dir);
+                let &(_, ref temp_dir) = self.writes_temp_dir.as_ref().unwrap();
+                let temp_file_p = temp_dir.join(req_p.file_name().expect("Failed to get requested file's filename"));
+                struct DropDelete<'a>(&'a Path);
+                impl<'a> Drop for DropDelete<'a> {
+                    fn drop(&mut self) {
+                        let _ = fs::remove_file(self.0);
+                    }
+                }
+
+                let mut temp_file = File::options().read(true).write(true).create(true).truncate(true).open(&temp_file_p).expect("Failed to create temp file");
+                let _temp_file_p_destroyer = DropDelete(&temp_file_p);
+                if let Err(err) = io::copy(&mut ibuf, &mut temp_file) {
+                    let _ = io::copy(&mut ibuf, &mut io::sink());
+                    return self.handle_put_error(req, "File not created.", err);
+                }
+
+                let _temp_file_p_destroyer = DropDelete(&temp_file_p);
+                temp_file.rewind().expect("Failed to rewind temp file");
+                let mut file = File::create(&req_p).expect("Failed to open requested file");
+                #[cfg(any(target_os = "linux", target_os = "android"))] // matches std::io::copy() #[cfg]
+                let err = io::copy(&mut temp_file, &mut file);
+                #[cfg(not(any(target_os = "linux", target_os = "android")))]
+                let err = io::copy(&mut BufReader::with_capacity(1024 * 1024, &mut temp_file), &mut file);
+                if let Err(err) = err {
+                    return self.handle_put_error(req, "File truncated.", err);
+                }
+
+                file
+            }
+        };
+
+        if let Some(ms) = mtime {
+            set_mtime_f(&file, ms);
         }
 
-        Ok(Response::with((if !legal || !existent {
-                               status::Created
-                           } else {
+        Ok(Response::with((if existent {
                                status::NoContent
+                           } else {
+                               status::Created
                            },
-                           Header(headers::Server(USER_AGENT.to_string())))))
+                           Header(headers::Server(USER_AGENT.into())))))
+    }
+
+    fn handle_put_error(&self, req: &mut Request, res: &str, err: IoError) -> IronResult<Response> {
+        log!(self.log, "{:w$} {} {}", "", res, err, w = self.remote_addresses(req).width());
+        return self.handle_generated_response_encoding(req,
+                                                       status::ServiceUnavailable,
+                                                       error_html("503 Service Unavailable", res, format_args!("{}", err)));
     }
 
     fn handle_delete(&self, req: &mut Request) -> IronResult<Response> {
@@ -1166,7 +1330,7 @@ impl HttpHandler {
             });
         }
 
-        Ok(Response::with((status::NoContent, Header(headers::Server(USER_AGENT.to_string())))))
+        Ok(Response::with((status::NoContent, Header(headers::Server(USER_AGENT.into())))))
     }
 
     fn handle_trace(&self, req: &mut Request) -> IronResult<Response> {
@@ -1175,13 +1339,12 @@ impl HttpHandler {
              self.remote_addresses(&req),
              url_path(&req.url));
 
-        let mut hdr = req.headers.clone();
-        hdr.set(headers::ContentType("message/http".parse().unwrap()));
+        let mut hdr = mem::replace(&mut req.headers, Headers::new());
+        hdr.set(headers::ContentType(Mime(MimeTopLevel::Message, MimeSubLevel::Ext("http".to_string()), Default::default()))); // message/http
 
         Ok(Response {
             status: Some(status::Ok),
             headers: hdr,
-            extensions: TypeMap::new(),
             body: None,
         })
     }
@@ -1195,13 +1358,12 @@ impl HttpHandler {
 
         self.handle_generated_response_encoding(req,
                                                 status::Forbidden,
-                                                html_response(ERROR_HTML,
-                                                              &["403 Forbidden",
-                                                                "This feature is currently disabled.",
-                                                                &format!("<p>Ask the server administrator to pass <samp>{}</samp> to the executable to \
-                                                                          enable support for {}.</p>",
-                                                                         switch,
-                                                                         desc)]))
+                                                error_html("403 Forbidden",
+                                                           "This feature is currently disabled.",
+                                                           format_args!("<p>Ask the server administrator to pass <samp>{}</samp> to the executable to \
+                                                                         enable support for {}.</p>",
+                                                                        switch,
+                                                                        desc)))
     }
 
     fn handle_bad_method(&self, req: &mut Request) -> IronResult<Response> {
@@ -1210,71 +1372,101 @@ impl HttpHandler {
              self.remote_addresses(&req),
              req.method);
 
-        let last_p = format!("<p>Unsupported request method: {}.<br />\nSupported methods: {}{}OPTIONS, GET, PUT, DELETE, HEAD, and TRACE.</p>",
-                             req.method,
-                             CommaList(if self.webdav {
-                                     &DAV_LEVEL_1_METHODS[..]
-                                 } else {
-                                     &[][..]
-                                 }
-                                 .iter()),
-                             if self.webdav { ", " } else { "" });
         self.handle_generated_response_encoding(req,
                                                 status::NotImplemented,
-                                                html_response(ERROR_HTML, &["501 Not Implemented", "This operation was not implemented.", &last_p]))
+                                                error_html("501 Not Implemented",
+                                                           "This operation was not implemented.",
+                                                           format_args!("<p>Unsupported request method: {}.<br />\nSupported methods: {}.</p>",
+                                                                        req.method,
+                                                                        CommaList(self.allowed_methods.iter()))))
     }
 
     fn handle_generated_response_encoding(&self, req: &mut Request, st: status::Status, resp: String) -> IronResult<Response> {
+        let hash = blake3::hash(resp.as_bytes());
+        let etag = hash.to_string();
+
+        if st == status::Ok && (req.method == method::Get || req.method == method::Head) {
+            if let Some(headers::IfNoneMatch::Items(inm)) = req.headers.get::<headers::IfNoneMatch>() {
+                if HttpHandler::etag_match(inm, &etag) {
+                    log!(self.log, "{:w$} Not Modified", "", w = self.remote_addresses(req).width());
+                    return Ok(Response::with((status::NotModified,
+                                              Header(headers::Server(USER_AGENT.into())),
+                                              Header(headers::ETag(headers::EntityTag::strong(etag))),
+                                              text_html_charset_utf8())));
+                }
+            }
+        }
+
         if let Some(encoding) = req.headers.get_mut::<headers::AcceptEncoding>().and_then(|es| response_encoding(&mut **es)) {
-            let cache_key = (blake3::hash(resp.as_bytes()), encoding.to_string());
+            let cache_key = (hash, encoding.0);
 
             {
                 if let Some(enc_resp) = self.cache_gen.read().expect("Generated file cache read lock poisoned").get(&cache_key) {
+                    enc_resp.1.store(precise_time_ns(), AtomicOrdering::Relaxed);
                     log!(self.log,
-                         "{} encoded as {} for {:.1}% ratio (cached)",
-                         Spaces(self.remote_addresses(req).to_string().len()),
+                         "{:w$} encoded as {} for {:.1}% ratio (cached)",
+                         "",
                          encoding,
-                         ((resp.len() as f64) / (enc_resp.len() as f64)) * 100f64);
+                         ((resp.len() as f64) / (enc_resp.0.len() as f64)) * 100f64,
+                         w = self.remote_addresses(req).width());
 
                     return Ok(Response::with((st,
-                                              Header(headers::Server(USER_AGENT.to_string())),
-                                              Header(headers::ContentEncoding(vec![encoding])),
-                                              "text/html;charset=utf-8".parse::<mime::Mime>().unwrap(),
-                                              &enc_resp[..])));
+                                              Header(headers::Server(USER_AGENT.into())),
+                                              Header(headers::ContentEncoding([encoding].into())),
+                                              Header(headers::ETag(headers::EntityTag::strong(etag))),
+                                              text_html_charset_utf8(),
+                                              &enc_resp.0[..])));
                 }
             }
 
             if let Some(enc_resp) = encode_str(&resp, &encoding) {
                 log!(self.log,
-                     "{} encoded as {} for {:.1}% ratio",
-                     Spaces(self.remote_addresses(req).to_string().len()),
+                     "{:w$} encoded as {} for {:.1}% ratio",
+                     "",
                      encoding,
-                     ((resp.len() as f64) / (enc_resp.len() as f64)) * 100f64);
+                     ((resp.len() as f64) / (enc_resp.len() as f64)) * 100f64,
+                     w = self.remote_addresses(req).width());
 
-                let mut cache = self.cache_gen.write().expect("Generated file cache read lock poisoned");
-                cache.insert(cache_key.clone(), enc_resp);
+                if enc_resp.len() as u64 <= self.encoded_generated_limit {
+                    let mut cache = self.cache_gen.write().expect("Generated file cache write lock poisoned");
+                    self.cache_gen_size.fetch_add(enc_resp.len() as u64, AtomicOrdering::Relaxed);
+                    cache.insert(cache_key.clone(), (enc_resp, AtomicU64::new(precise_time_ns())));
 
-                return Ok(Response::with((st,
-                                          Header(headers::Server(USER_AGENT.to_string())),
-                                          Header(headers::ContentEncoding(vec![encoding])),
-                                          "text/html;charset=utf-8".parse::<mime::Mime>().unwrap(),
-                                          &cache[&cache_key][..])));
+                    return Ok(Response::with((st,
+                                              Header(headers::Server(USER_AGENT.into())),
+                                              Header(headers::ContentEncoding([encoding].into())),
+                                              Header(headers::ETag(headers::EntityTag::strong(etag))),
+                                              text_html_charset_utf8(),
+                                              &cache[&cache_key].0[..])));
+                } else {
+                    return Ok(Response::with((st,
+                                              Header(headers::Server(USER_AGENT.into())),
+                                              Header(headers::ContentEncoding([encoding].into())),
+                                              Header(headers::ETag(headers::EntityTag::strong(etag))),
+                                              text_html_charset_utf8(),
+                                              enc_resp)));
+                }
             } else {
                 log!(self.log,
-                     "{} failed to encode as {}, sending identity",
-                     Spaces(self.remote_addresses(req).to_string().len()),
-                     encoding);
+                     "{:w$} failed to encode as {}, sending identity",
+                     "",
+                     encoding,
+                     w = self.remote_addresses(req).width());
             }
         }
 
-        Ok(Response::with((st, Header(headers::Server(USER_AGENT.to_string())), "text/html;charset=utf-8".parse::<mime::Mime>().unwrap(), resp)))
+        Ok(Response::with((st,
+                           Header(headers::Server(USER_AGENT.into())),
+                           Header(headers::ETag(headers::EntityTag::strong(etag))),
+                           text_html_charset_utf8(),
+                           resp)))
     }
 
     fn handle_requested_entity_unopenable(&self, req: &mut Request, e: IoError, entity_type: &str) -> IronResult<Response> {
         if e.kind() == IoErrorKind::PermissionDenied {
             self.handle_generated_response_encoding(req,
                                                     status::Forbidden,
-                                                    html_response(ERROR_HTML, &["403 Forbidden", &format!("Can't access {}.", url_path(&req.url)), ""]))
+                                                    error_html("403 Forbidden", format_args!("Can't access {}.", url_path(&req.url)), ""))
         } else {
             // The ops that get here (File::open(), fs::read_dir()) can't return any other errors by the time they're run
             // (and even if it could, there isn't much we can do about them)
@@ -1284,9 +1476,10 @@ impl HttpHandler {
 
     fn handle_raw_fs_api_response<R: Serialize>(&self, st: status::Status, resp: &R) -> IronResult<Response> {
         Ok(Response::with((st,
-                           Header(headers::Server(USER_AGENT.to_string())),
+                           Header(headers::Server(USER_AGENT.into())),
                            Header(RawFsApiHeader(true)),
-                           "application/json;charset=utf-8".parse::<mime::Mime>().unwrap(),
+                           // application/json; charset=utf-8
+                           Mime(MimeTopLevel::Application, MimeSubLevel::Json, vec![(MimeAttr::Charset, MimeAttrValue::Utf8)]),
                            serde_json::to_string(&resp).unwrap())))
     }
 
@@ -1351,10 +1544,10 @@ impl HttpHandler {
 
     fn guess_mime_type(&self, req_p: &Path) -> Mime {
         // Based on mime_guess::guess_mime_type_opt(); that one does to_str() instead of to_string_lossy()
-        let ext = req_p.extension().map(OsStr::to_string_lossy).unwrap_or("".into());
+        let ext = req_p.extension().unwrap_or(OsStr::new(""));
 
         (self.mime_type_overrides.get(&*ext).cloned())
-            .or_else(|| get_mime_type_opt(&*ext))
+            .or_else(|| ext.to_str().and_then(get_mime_type_opt))
             .unwrap_or_else(|| if file_binary(req_p) {
                 Mime(MimeTopLevel::Application, MimeSubLevel::OctetStream, Default::default()) // "application/octet-stream"
             } else {
@@ -1363,44 +1556,24 @@ impl HttpHandler {
     }
 }
 
-impl Clone for HttpHandler {
-    fn clone(&self) -> HttpHandler {
-        HttpHandler {
-            hosted_directory: self.hosted_directory.clone(),
-            follow_symlinks: self.follow_symlinks,
-            sandbox_symlinks: self.sandbox_symlinks,
-            generate_listings: self.generate_listings,
-            check_indices: self.check_indices,
-            strip_extensions: self.strip_extensions,
-            log: self.log,
-            webdav: self.webdav,
-            global_auth_data: self.global_auth_data.clone(),
-            path_auth_data: self.path_auth_data.clone(),
-            writes_temp_dir: self.writes_temp_dir.clone(),
-            encoded_temp_dir: self.encoded_temp_dir.clone(),
-            proxies: self.proxies.clone(),
-            proxy_redirs: self.proxy_redirs.clone(),
-            mime_type_overrides: self.mime_type_overrides.clone(),
-            additional_headers: self.additional_headers.clone(),
-            cache_gen: Default::default(),
-            cache_fs: Default::default(),
-        }
-    }
+/// text/html; charset=utf-8
+fn text_html_charset_utf8() -> Mime {
+    Mime(MimeTopLevel::Text, MimeSubLevel::Html, vec![(MimeAttr::Charset, MimeAttrValue::Utf8)])
 }
 
 
 pub struct AddressWriter<'r, 'p, 'ra, 'rb: 'ra> {
     pub request: &'r Request<'ra, 'rb>,
     pub proxies: &'p BTreeMap<IpCidr, String>,
-    /// (at all, log_colour)
-    pub log: (bool, bool),
+    /// (at all, log_time, log_colour)
+    pub log: (bool, bool, bool),
 }
 
 impl<'r, 'p, 'ra, 'rb: 'ra> fmt::Display for AddressWriter<'r, 'p, 'ra, 'rb> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         use trivial_colours::{Reset as CReset, Colour as C};
 
-        if self.log.1 {
+        if self.log.2 {
             write!(f, "{green}{}{reset}", self.request.remote_addr, green = C::Green, reset = CReset)?;
         } else {
             write!(f, "{}", self.request.remote_addr)?;
@@ -1424,6 +1597,27 @@ impl<'r, 'p, 'ra, 'rb: 'ra> fmt::Display for AddressWriter<'r, 'p, 'ra, 'rb> {
     }
 }
 
+impl<'r, 'p, 'ra, 'rb: 'ra> AddressWriter<'r, 'p, 'ra, 'rb> {
+    fn width(&self) -> usize {
+        // per http://192.168.1.109:8000/target/doc/rust/src/core/net/socket_addr.rs.html#571
+        const LONGEST_IPV6_SOCKET_ADDR: &str = "[ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff%4294967296]:65536";
+        let mut widthbuf = ArrayString::<{ LONGEST_IPV6_SOCKET_ADDR.len() }>::new();
+        write!(&mut widthbuf, "{}", self.request.remote_addr).unwrap();
+        let mut len = widthbuf.len();
+        for (network, header) in self.proxies {
+            if network.contains(&self.request.remote_addr.ip()) {
+                if let Some(saddrs) = self.request.headers.get_raw(header) {
+                    for saddr in saddrs {
+                        len += " for ".len();
+                        len += saddr.len();
+                    }
+                }
+            }
+        }
+        return len;
+    }
+}
+
 
 /// Attempt to start a server on ports from `from` to `up_to`, inclusive, with the specified handler.
 ///
@@ -1440,42 +1634,22 @@ impl<'r, 'p, 'ra, 'rb: 'ra> fmt::Display for AddressWriter<'r, 'p, 'ra, 'rb> {
 /// # use iron::{status, Response};
 /// let server = try_ports(|req| Ok(Response::with((status::Ok, "Abolish the burgeoisie!"))), 8000, 8100, None).unwrap();
 /// ```
-pub fn try_ports<H: Handler + Clone>(hndlr: H, addr: IpAddr, from: u16, up_to: u16, tls_data: &Option<((String, PathBuf), String)>)
-                                     -> Result<Listening, Error> {
-    let hndlr = hndlr;
-    for port in from..up_to + 1 {
-        let ir = Iron::new(hndlr.clone());
+pub fn try_ports<H: Handler + Copy>(hndlr: H, addr: IpAddr, from: u16, up_to: u16, tls_data: &Option<((String, PathBuf), String)>) -> Result<Listening, Error> {
+    for port in from..=up_to {
+        let ir = Iron::new(hndlr);
         match if let Some(&((_, ref id), ref pw)) = tls_data.as_ref() {
             ir.https((addr, port),
-                     NativeTlsServer::new(id, pw).map_err(|err| {
-                    Error {
-                        desc: "TLS certificate",
-                        op: "open",
-                        more: err.to_string().into(),
-                    }
-                })?)
+                     NativeTlsServer::new(id, pw).map_err(|err| Error(format!("Opening TLS certificate: {}", err)))?)
         } else {
             ir.http((addr, port))
         } {
             Ok(server) => return Ok(server),
-            Err(error) => {
-                let error_s = error.to_string();
-                if !error_s.contains("port") && !error_s.contains("in use") {
-                    return Err(Error {
-                        desc: "server",
-                        op: "start",
-                        more: error_s.into(),
-                    });
-                }
-            }
+            Err(iron::error::HttpError::Io(ioe)) if ioe.kind() == IoErrorKind::AddrInUse => { /* next */ }
+            Err(error) => return Err(Error(format!("Starting server: {}", error))),
         }
     }
 
-    Err(Error {
-        desc: "server",
-        op: "start",
-        more: "no free ports".into(),
-    })
+    Err(Error(format!("Starting server: no free ports")))
 }
 
 /// Generate a passwordless self-signed certificate in the `"tls"` subdirectory of the specified directory
@@ -1491,16 +1665,12 @@ pub fn try_ports<H: Handler + Clone>(hndlr: H, addr: IpAddr, from: u16, up_to: u
 /// assert_eq!(pass, "");
 /// ```
 pub fn generate_tls_data(temp_dir: &(String, PathBuf)) -> Result<((String, PathBuf), String), Error> {
-    fn err<M: Into<Cow<'static, str>>>(which: bool, op: &'static str, more: M) -> Error {
-        Error {
-            desc: if which {
+    fn err<M: fmt::Display>(which: bool, op: &'static str, more: M) -> Error {
+        Error(format!("{} {}: {}", op, if which {
                 "TLS key generation process"
             } else {
                 "TLS identity generation process"
-            },
-            op: op,
-            more: more.into(),
-        }
+            }, more))
     }
     fn exit_err(which: bool, process: &mut Child, exitc: &ExitStatus) -> Error {
         let mut stdout = String::new();
@@ -1512,19 +1682,11 @@ pub fn generate_tls_data(temp_dir: &(String, PathBuf)) -> Result<((String, PathB
             stderr = "<error getting process stderr".to_string();
         }
 
-        err(which, "exit", format!("{};\nstdout: ```\n{}```;\nstderr: ```\n{}```", exitc, stdout, stderr))
+        err(which, "Exiting", format_args!("{};\nstdout: ```\n{}```;\nstderr: ```\n{}```", exitc, stdout, stderr))
     }
 
     let tls_dir = temp_dir.1.join("tls");
-    if !tls_dir.exists() {
-        if let Err(err) = fs::create_dir_all(&tls_dir) {
-            return Err(Error {
-                desc: "temporary directory",
-                op: "create",
-                more: err.to_string().into(),
-            });
-        }
-    }
+    fs::create_dir_all(&tls_dir).map_err(|err| Error(format!("Creating temporary directory: {}", err)))?;
 
     let mut child =
         Command::new("openssl").args(&["req", "-x509", "-newkey", "rsa:4096", "-nodes", "-keyout", "tls.key", "-out", "tls.crt", "-days", "3650", "-utf8"])
@@ -1533,7 +1695,7 @@ pub fn generate_tls_data(temp_dir: &(String, PathBuf)) -> Result<((String, PathB
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
-            .map_err(|error| err(true, "spawn", error.to_string()))?;
+            .map_err(|error| err(true, "Spawning", error))?;
     child.stdin
         .as_mut()
         .unwrap()
@@ -1543,8 +1705,8 @@ pub fn generate_tls_data(temp_dir: &(String, PathBuf)) -> Result<((String, PathB
                            env!("CARGO_PKG_VERSION"),
                            "\nnabijaczleweli@gmail.com\n")
             .as_bytes())
-        .map_err(|error| err(true, "pipe", error.to_string()))?;
-    let es = child.wait().map_err(|error| err(true, "wait", error.to_string()))?;
+        .map_err(|error| err(true, "Piping", error))?;
+    let es = child.wait().map_err(|error| err(true, "Waiting", error))?;
     if !es.success() {
         return Err(exit_err(true, &mut child, &es));
     }
@@ -1570,8 +1732,8 @@ pub fn generate_tls_data(temp_dir: &(String, PathBuf)) -> Result<((String, PathB
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn()
-        .map_err(|error| err(false, "spawn", error.to_string()))?;
-    let es = child.wait().map_err(|error| err(false, "wait", error.to_string()))?;
+        .map_err(|error| err(false, "Spawning", error))?;
+    let es = child.wait().map_err(|error| err(false, "Waiting", error))?;
     if !es.success() {
         return Err(exit_err(false, &mut child, &es));
     }

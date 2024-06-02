@@ -16,11 +16,10 @@ macro_rules! xml_name {
     }
 }
 
-
-lazy_static! {
-    /// HTTP methods we support for WebDAV level 1, as specified in https://tools.ietf.org/html/rfc2518, without locks
-    pub static ref DAV_LEVEL_1_METHODS: Vec<method::Method> =
-        ["COPY", "MKCOL", "MOVE", "PROPFIND", "PROPPATCH"].iter().map(|m| method::Extension(m.to_string())).collect();
+/// HTTP methods we support for WebDAV level 1, as specified in https://tools.ietf.org/html/rfc2518, without locks
+pub fn dav_level_1_methods(writes: bool) -> &'static [method::Method] {
+    static METHODS: [method::Method; 5] = [method::DavPropfind, method::DavCopy, method::DavMkcol, method::DavMove, method::DavProppatch];
+    if writes { &METHODS[..] } else { &METHODS[..1] }
 }
 
 /// Prefix and namespace URI for generic WebDAV elements
@@ -81,9 +80,9 @@ impl Header for Dav {
         "DAV"
     }
 
-    /// Dummy impl returning an empty value, since we're only ever sending these
-    fn parse_header(_: &[Vec<u8>]) -> HyperResult<Dav> {
-        Ok(Dav(&[]))
+    /// We only ever send these
+    fn parse_header<T: AsRef<[u8]>>(_: &[T]) -> HyperResult<Dav> {
+        unreachable!()
     }
 }
 
@@ -97,6 +96,7 @@ impl HeaderFormat for Dav {
         Ok(())
     }
 }
+
 
 /// The [Depth header](https://tools.ietf.org/html/rfc2518#section-9.2).
 #[derive(Debug, Copy, Clone, Hash, PartialOrd, Ord, PartialEq, Eq)]
@@ -122,12 +122,12 @@ impl Header for Depth {
         "Depth"
     }
 
-    fn parse_header(raw: &[Vec<u8>]) -> HyperResult<Depth> {
+    fn parse_header<T: AsRef<[u8]>>(raw: &[T]) -> HyperResult<Depth> {
         if raw.len() != 1 {
             return Err(HyperError::Header);
         }
 
-        Ok(match &unsafe { raw.get_unchecked(0) }[..] {
+        Ok(match unsafe { raw.get_unchecked(0) }.as_ref() {
             b"0" => Depth::Zero,
             b"1" => Depth::One,
             b"infinity" => Depth::Infinity,
@@ -153,6 +153,7 @@ impl fmt::Display for Depth {
     }
 }
 
+
 /// The [Destination header](https://tools.ietf.org/html/rfc2518#section-9.3).
 #[derive(Debug, Clone, Hash, PartialOrd, Ord, PartialEq, Eq)]
 pub struct Destination(pub GenericUrl);
@@ -162,12 +163,12 @@ impl Header for Destination {
         "Destination"
     }
 
-    fn parse_header(raw: &[Vec<u8>]) -> HyperResult<Destination> {
+    fn parse_header<T: AsRef<[u8]>>(raw: &[T]) -> HyperResult<Destination> {
         if raw.len() != 1 {
             return Err(HyperError::Header);
         }
 
-        let url = str::from_utf8(&unsafe { raw.get_unchecked(0) }).map_err(|_| HyperError::Header)?;
+        let url = str::from_utf8(unsafe { raw.get_unchecked(0) }.as_ref()).map_err(|_| HyperError::Header)?;
         GenericUrl::parse(url).map(Destination).map_err(HyperError::Uri)
     }
 }
@@ -185,6 +186,7 @@ impl fmt::Display for Destination {
     }
 }
 
+
 /// The [Overwrite header](https://tools.ietf.org/html/rfc2518#section-9.6).
 #[derive(Debug, Copy, Clone, Hash, PartialOrd, Ord, PartialEq, Eq)]
 pub struct Overwrite(pub bool);
@@ -194,18 +196,13 @@ impl Header for Overwrite {
         "Overwrite"
     }
 
-    fn parse_header(raw: &[Vec<u8>]) -> HyperResult<Overwrite> {
+    fn parse_header<T: AsRef<[u8]>>(raw: &[T]) -> HyperResult<Overwrite> {
         if raw.len() != 1 {
             return Err(HyperError::Header);
         }
-
-        let val = unsafe { raw.get_unchecked(0) };
-        if val.len() != 1 {
-            return Err(HyperError::Header);
-        }
-        match unsafe { val.get_unchecked(0) } {
-            b'T' => Ok(Overwrite(true)),
-            b'F' => Ok(Overwrite(false)),
+        match unsafe { raw.get_unchecked(0) }.as_ref() {
+            b"T" => Ok(Overwrite(true)),
+            b"F" => Ok(Overwrite(false)),
             _ => Err(HyperError::Header),
         }
     }

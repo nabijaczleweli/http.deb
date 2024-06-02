@@ -1,48 +1,38 @@
 "use strict";
 
-window.addEventListener("load", function() {
-  let new_directory_line = document.getElementById("new_directory");
+window.addEventListener("DOMContentLoaded", function() {
+  let new_directory = document.getElementById('new"directory');
 
-  if(new_directory_line) {
-    let new_directory_status_output = new_directory_line.children[0];
-    let new_directory_filename_input = null;
+  let first_onclick = true, input;
+  let submit_callback = function() {
+    if(make_request_error) {
+      first_onclick = true;
+      make_request_error = false;
+    }
+    if(first_onclick) {
+      first_onclick = false;
+      create_new_directory(input.value, new_directory.firstChild);
+    }
+  };
 
-    new_directory_line.addEventListener("click", function(ev) {
-      if(new_directory_filename_input === null || ev.target === new_directory_filename_input)
-        ev.preventDefault();
-      else if(ev.target === new_directory_status_output)
-        ;
-      else if(ev.target !== new_directory_filename_input) {
-        ev.preventDefault();
-        new_directory_filename_input.focus();
-      }
+  new_directory.onclick = function(ev) {
+    ev.preventDefault();
 
-      if(new_directory_filename_input === null) {
-        let new_directory_filename_cell = document.createElement("span");
-        new_directory_filename_cell.id = "newdir_input";
-        new_directory_line.append(new_directory_filename_cell);
-
-        let first_onclick = true;
-        let submit_callback = function() {
-          if(first_onclick) {
-            first_onclick = false;
-            return;
-          }
-          create_new_directory(new_directory_filename_input.value, new_directory_status_output);
-        };
-
-        new_directory_filename_input = make_filename_input(new_directory_filename_cell, "", submit_callback);
-        make_confirm_icon(new_directory_status_output, submit_callback);
-      }
-    }, true);
-  }
+    if(!input) {
+      make_confirm_icon(new_directory.firstChild, submit_callback);
+      let c = document.createElement("span");
+      new_directory.appendChild(c);
+      input = make_filename_input(c, "", submit_callback);
+    } else
+      input.focus();
+  };
 });
 
 
 function get_href_for_line(line) {
-  return line.href;
+  return line.parentElement.href;
 }
 
 function get_filename_cell_for_line(line) {
-  return line.children[0];
+  return line.firstChild;
 }

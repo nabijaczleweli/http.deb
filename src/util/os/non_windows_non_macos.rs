@@ -1,21 +1,15 @@
-use std::os::unix::fs::{PermissionsExt, FileTypeExt};
-use libc::{O_RDONLY, c_ulong, close, ioctl, open};
-use std::os::unix::ffi::OsStrExt;
+use std::os::unix::fs::{OpenOptionsExt, FileTypeExt};
 use std::fs::{FileType, Metadata};
-use std::ffi::CString;
+use std::os::fd::AsRawFd;
+use std::os::raw::c_int;
+use libc::O_NONBLOCK;
 use std::path::Path;
+use std::fs::OpenOptions;
 
 
-include!(concat!(env!("OUT_DIR"), "/ioctl-data/ioctl.rs"));
-
-
-// Stolen from https://unix.superglobalmegacorp.com/Net2/newsrc/sys/stat.h.html
-/// X for owner
-const S_IXUSR: u32 = 0o000100;
-/// X for group
-const S_IXGRP: u32 = 0o000010;
-/// X for other
-const S_IXOTH: u32 = 0o000001;
+extern "C" {
+    fn http_blkgetsize(fd: c_int) -> u64;
+}
 
 
 /// OS-specific check for fileness
@@ -30,25 +24,14 @@ pub fn file_length<P: AsRef<Path>>(meta: &Metadata, path: &P) -> u64 {
 }
 
 fn file_length_impl(meta: &Metadata, path: &Path) -> u64 {
-    if is_device(&meta.file_type()) {
-        let mut block_count: c_ulong = 0;
-
-        let path_c = CString::new(path.as_os_str().as_bytes()).unwrap();
-        let dev_file = unsafe { open(path_c.as_ptr(), O_RDONLY) };
-        if dev_file >= 0 {
-            let ok = unsafe { ioctl(dev_file, BLKGETSIZE, &mut block_count as *mut c_ulong) } == 0;
-            unsafe { close(dev_file) };
-
-            if ok {
-                return block_count as u64 * 512;
+    if meta.file_type().is_block_device() || meta.file_type().is_char_device() {
+        if let Ok(f) = OpenOptions::new().read(true).custom_flags(O_NONBLOCK).open(path) {
+            let size = unsafe { http_blkgetsize(f.as_raw_fd()) };
+            if size != u64::MAX {
+                return size;
             }
         }
     }
 
     meta.len()
-}
-
-/// Check if file is marked executable
-pub fn file_executable(meta: &Metadata) -> bool {
-    (meta.permissions().mode() & (S_IXUSR | S_IXGRP | S_IXOTH)) != 0
 }
