@@ -1,0 +1,23 @@
+From: =?utf-8?b?0L3QsNCx?= <nabijaczleweli@nabijaczleweli.xyz>
+Date: Sun, 2 Jun 2024 19:25:51 +0200
+Subject: Use $HTTP_GENVER instead of Cargo.toml version as generator branding
+
+---
+ build.rs | 4 +---
+ 1 file changed, 1 insertion(+), 3 deletions(-)
+
+diff --git a/build.rs b/build.rs
+index 846cbf9..970823d 100644
+--- a/build.rs
++++ b/build.rs
+@@ -29,9 +29,7 @@ fn assets() -> Vec<(&'static str, String)> {
+         println!("cargo:rerun-if-changed=Cargo.toml");
+         assets.push(("generator",
+                      format!("http {}",
+-                             BufReader::new(File::open("Cargo.toml").unwrap()).lines().flatten().find(|l| l.starts_with("version = ")).unwrap()
+-                                 ["version = ".len()..]
+-                                 .trim_matches('"'))));
++                             env!("HTTP_GENVER"))));
+     }
+     for (key, mime, file) in
+         [("favicon", "image/png", "assets/favicon.png"),
