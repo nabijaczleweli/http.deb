@@ -1,3 +1,14 @@
+http (2.0.1-1) unstable; urgency=medium
+
+  * New upstream version 2.0.1 (+ upstream changelog)
+  * Rebase patches
+  * Uncomment brotli simd feature, disabled upstream for cargo git installs
+  * d/date.js: removed upstream
+  * d/copyright: update for vendored deps and new assets
+  * Use Debian version as generator branding
+
+ -- наб <nabijaczleweli@nabijaczleweli.xyz>  Sun, 02 Jun 2024 18:23:10 +0200
+
 http (1.13.2-1) unstable; urgency=medium
 
   * New upstream version 1.13.2
