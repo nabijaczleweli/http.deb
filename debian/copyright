@@ -7,6 +7,32 @@ Files: *
 Copyright: 2016 thecoshman <rust@thecoshman.com>
 License: Expat
 
+Files: assets/icons/*
+License: public-domain
+ Dedicated to the public domain, cf.
+ https://sources.debian.org/src/apache2/2.4.59-2/docs/icons/README/
+
+Files: assets/icons/delete_file.png
+Copyright: 2008 Mankash <https://commons.wikimedia.org/wiki/User:Mankash>
+           2024 наб <nabijaczleweli@nabijaczleweli.xyz>
+License: GFDL-1.2-or-later
+
+Files: assets/icons/confirm.gif
+License: public-domain
+ Per https://commons.wikimedia.org/wiki/File:Green_check.png
+
+Files: vendor/rfsapi-0.2.0/*
+Copyright: 2017 nabijaczleweli
+License: Expat
+
+Files: vendor/iron-0.6.1/*
+Copyright: 2014 Iron Core Team
+License: Expat
+
+Files: vendor/hyper-0.10.16/*
+Copyright: 2014 Sean McArthur
+License: Expat
+
 Files: debian/*
 Copyright: 2020 nabijaczleweli <nabijaczleweli@gmail.com>
 License: Expat
@@ -29,3 +55,7 @@ License: Expat
  LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
  OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
  SOFTWARE.
+
+License: GFDL-1.2-or-later
+ On Debian systems, the complete text of the GNU Free Documentation
+ License can be found in /usr/share/common-licenses/GFDL
