@@ -1,3 +1,33 @@
+v2.1.0          Death couldn't stiffen you
+
+    Fixed:
+      * Is-file-text evaluation reading infinite amounts of data into RAM
+        to find the first new-line (now up to 2k (LINE_MAX))
+      * Display of filenames with initial/consecutive/final whitespace
+      * Generated-index renaming thereof
+        (Reported-by: @rozbrajaczpoziomow)
+
+    New:
+      * -D/--convenient-webdav that allows MKCOL/MOVE only,
+        allowing interactively making directories and renaming
+        (https://github.com/thecoshman/http/issues/163)
+
+    Internal:
+      * Single-trivial-use itertools dependency removed
+
+v2.0.2          Feels like he plugged into a socket when you touch 'em
+
+    Fixed:
+      * Builds on i386 Linux
+
+    New:
+      * Documentation for installing (mainly) on Windows
+        to work around cargo bugs
+        (https://github.com/rust-lang/cargo/issues/14001)
+
+    Internal:
+      * Drop rand dependency
+
 v2.0.1          Ain't a thang for me, pain then glory
 
     Fixed:
