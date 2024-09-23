@@ -5,7 +5,6 @@ extern crate percent_encoding;
 extern crate trivial_colours;
 extern crate serde_json;
 extern crate mime_guess;
-extern crate itertools;
 extern crate tabwriter;
 extern crate arrayvec;
 extern crate walkdir;
@@ -22,7 +21,6 @@ extern crate cidr;
 extern crate clap;
 extern crate iron;
 extern crate libc;
-extern crate rand;
 extern crate time;
 extern crate xml;
 
