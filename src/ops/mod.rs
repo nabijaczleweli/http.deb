@@ -9,7 +9,6 @@ use time::precise_time_ns;
 use arrayvec::ArrayString;
 use std::fs::{self, File};
 use std::default::Default;
-use rand::{Rng, thread_rng};
 use iron::modifiers::Header;
 use std::path::{PathBuf, Path};
 use std::ffi::{OsString, OsStr};
@@ -18,13 +17,12 @@ use iron::headers::EncodingType;
 use iron::url::Url as GenericUrl;
 use mime_guess::get_mime_type_opt;
 use hyper_native_tls::NativeTlsServer;
+use std::hash::{BuildHasher, RandomState};
 use std::collections::{BTreeMap, HashMap};
 use self::super::{LogLevel, Options, Error};
 use std::process::{ExitStatus, Command, Child, Stdio};
 use rfsapi::{RawFsApiHeader, FilesetData, RawFileData};
 use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
-use rand::distributions::uniform::Uniform as UniformDistribution;
-use rand::distributions::Alphanumeric as AlphanumericDistribution;
 use iron::{headers, status, method, IronResult, Listening, Response, Headers, Request, Handler, Iron};
 use std::io::{self, ErrorKind as IoErrorKind, BufReader, SeekFrom, Write, Error as IoError, Read, Seek};
 use iron::mime::{Mime, Attr as MimeAttr, Value as MimeAttrValue, SubLevel as MimeSubLevel, TopLevel as MimeTopLevel};
@@ -122,6 +120,13 @@ pub use self::bandwidth::{LimitBandwidthMiddleware, SimpleChain};
 
 type CacheT<Cnt> = HashMap<(blake3::Hash, EncodingType), (Cnt, AtomicU64)>;
 
+#[derive(Debug, Copy, Clone, Hash, PartialEq, Eq, PartialOrd, Ord)]
+pub enum WebDavLevel {
+    No,
+    MkColMoveOnly,
+    All,
+}
+
 pub struct HttpHandler {
     pub hosted_directory: (String, PathBuf),
     pub follow_symlinks: bool,
@@ -131,7 +136,7 @@ pub struct HttpHandler {
     pub strip_extensions: bool,
     /// (at all, log_time, log_colour)
     pub log: (bool, bool, bool),
-    pub webdav: bool,
+    pub webdav: WebDavLevel,
     pub global_auth_data: Option<(String, Option<String>)>,
     pub path_auth_data: BTreeMap<String, Option<(String, Option<String>)>>,
     pub writes_temp_dir: Option<(String, PathBuf)>,
@@ -173,7 +178,9 @@ impl HttpHandler {
 
         let allowed_methods = [method::Options, method::Get, method::Head, method::Trace]
             .iter()
-            .chain(dav_level_1_methods(opts.allow_writes).iter().filter(|_| opts.webdav))
+            .chain(dav_level_1_methods(opts.allow_writes)
+                .iter()
+                .filter(|method| opts.webdav == WebDavLevel::All || (opts.webdav == WebDavLevel::MkColMoveOnly && matches!(**method, method::DavMkcol | method::DavMove))))
             .chain([method::Put, method::Delete].iter().filter(|_| opts.allow_writes))
             .cloned()
             .collect::<Vec<_>>()
@@ -260,15 +267,15 @@ impl Handler for &'static HttpHandler {
             }
             method::Trace => self.handle_trace(req),
 
-            method::DavCopy if self.webdav => self.handle_webdav_copy(req),
-            method::DavMkcol if self.webdav => self.handle_webdav_mkcol(req),
-            method::DavMove if self.webdav => self.handle_webdav_move(req),
-            method::DavPropfind if self.webdav => self.handle_webdav_propfind(req),
-            method::DavProppatch if self.webdav => self.handle_webdav_proppatch(req),
+            method::DavCopy if self.webdav >= WebDavLevel::All => self.handle_webdav_copy(req),
+            method::DavMkcol if self.webdav >= WebDavLevel::MkColMoveOnly => self.handle_webdav_mkcol(req),
+            method::DavMove if self.webdav >= WebDavLevel::MkColMoveOnly => self.handle_webdav_move(req),
+            method::DavPropfind if self.webdav >= WebDavLevel::All => self.handle_webdav_propfind(req),
+            method::DavProppatch if self.webdav >= WebDavLevel::All => self.handle_webdav_proppatch(req),
 
             _ => self.handle_bad_method(req),
         }?;
-        if self.webdav {
+        if self.webdav >= WebDavLevel::All {
             resp.headers.set(Dav::LEVEL_1);
         }
         for (h, v) in &self.additional_headers {
@@ -680,12 +687,12 @@ impl HttpHandler {
                                                           Header(headers::ContentEncoding([encoding].into())),
                                                           resp,
                                                           mt)));
-                            },
+                            }
                             Err(err) if err.kind() == IoErrorKind::NotFound => true,
                             e @ Err(_) => {
                                 e.expect("Failed to get encoded file metadata");
                                 unsafe { std::hint::unreachable_unchecked() }
-                            },
+                            }
                         }
                     }
                     Some(&((_, false, _), _)) => {
@@ -701,7 +708,7 @@ impl HttpHandler {
             if forgor {
                 self.cache_fs_files.write().expect("Filesystem file cache write lock poisoned").retain(|_, v| *v == hash);
                 self.cache_fs.write().expect("Filesystem cache write lock poisoned").remove(&cache_key);
-                return self.handle_get_file_encoded(req, req_p, mt, headers, etag)
+                return self.handle_get_file_encoded(req, req_p, mt, headers, etag);
             }
 
             let mut resp_p = self.encoded_temp_dir.as_ref().unwrap().1.join(cache_key.0.to_hex().as_str());
@@ -947,7 +954,7 @@ impl HttpHandler {
                                  if is_file { "" } else { "/" },
                                  if show_file_management_controls {
                                      DisplayThree(r#"<span class="manage"><span class="delete_file_icon" onclick="delete_onclick(arguments[0])">Delete</span>"#,
-                                                  if self.webdav {
+                                                  if self.webdav >= WebDavLevel::MkColMoveOnly {
                                                       r#" <span class="rename_icon" onclick="rename_onclick(arguments[0])">Rename</span>"#
                                                   } else {
                                                       ""
@@ -995,7 +1002,7 @@ impl HttpHandler {
                                                                               } else {
                                                                                   ""
                                                                               },
-                                                                              if show_file_management_controls && self.webdav {
+                                                                              if show_file_management_controls && self.webdav >= WebDavLevel::MkColMoveOnly {
                                                                                   r#"<a id='new"directory' href><span class="new_dir_icon">Create directory</span></a>"#
                                                                               } else {
                                                                                   ""
@@ -1097,7 +1104,7 @@ impl HttpHandler {
                                if is_file { "</abbr>" } else { "" },
                                if show_file_management_controls {
                                    DisplayThree("<td><a href class=\"delete_file_icon\" onclick=\"delete_onclick(arguments[0])\">Delete</a>",
-                                                if self.webdav {
+                                                if self.webdav >= WebDavLevel::MkColMoveOnly {
                                                     " <a href class=\"rename_icon\" onclick=\"rename_onclick(arguments[0])\">Rename</a>"
                                                 } else {
                                                     ""
@@ -1142,7 +1149,7 @@ impl HttpHandler {
                                                                        } else {
                                                                            ""
                                                                        },
-                                                                       if show_file_management_controls && self.webdav {
+                                                                       if show_file_management_controls && self.webdav >= WebDavLevel::MkColMoveOnly {
                                                                            "<tr id=\'new\"directory\'><td><a tabindex=\"-1\" href class=\"new_dir_icon\"></a></td>\
                                                                                                       <td colspan=3><a href>Create directory</a></td>\
                                                                                                       <td><a tabindex=\"-1\" href>&nbsp;</a></td></tr>"
@@ -1666,11 +1673,14 @@ pub fn try_ports<H: Handler + Copy>(hndlr: H, addr: IpAddr, from: u16, up_to: u1
 /// ```
 pub fn generate_tls_data(temp_dir: &(String, PathBuf)) -> Result<((String, PathBuf), String), Error> {
     fn err<M: fmt::Display>(which: bool, op: &'static str, more: M) -> Error {
-        Error(format!("{} {}: {}", op, if which {
-                "TLS key generation process"
-            } else {
-                "TLS identity generation process"
-            }, more))
+        Error(format!("{} {}: {}",
+                      op,
+                      if which {
+                          "TLS key generation process"
+                      } else {
+                          "TLS identity generation process"
+                      },
+                      more))
     }
     fn exit_err(which: bool, process: &mut Child, exitc: &ExitStatus) -> Error {
         let mut stdout = String::new();
@@ -1749,25 +1759,21 @@ pub fn generate_tls_data(temp_dir: &(String, PathBuf)) -> Result<((String, PathB
 
 /// Generate random username:password auth credentials.
 pub fn generate_auth_data() -> String {
+    const USERNAME_SET_LEN: usize = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789".len();
     const PASSWORD_SET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789~!@#$%^&*()_+`-=[]{}|;',./<>?";
 
 
-    let mut rng = thread_rng();
-    let username_len = rng.sample(UniformDistribution::new(6, 12));
-    let password_len = rng.sample(UniformDistribution::new(10, 25));
+    let rnd = RandomState::new();
+    let username_len = (rnd.hash_one((0, 0)) % (12 - 6) + 6) as usize;
+    let password_len = (rnd.hash_one((0, 1)) % (25 - 10) + 10) as usize;
 
     let mut res = String::with_capacity(username_len + 1 + password_len);
-
-    for _ in 0..username_len {
-        res.push(rng.sample(AlphanumericDistribution));
+    for b in 0..username_len {
+        res.push(PASSWORD_SET[(rnd.hash_one((1, b)) % (USERNAME_SET_LEN as u64)) as usize] as char);
     }
-
     res.push(':');
-
-    let password_gen = UniformDistribution::new(0, PASSWORD_SET.len());
-    for _ in 0..password_len {
-        res.push(PASSWORD_SET[rng.sample(password_gen) as usize] as char);
+    for b in 0..password_len {
+        res.push(PASSWORD_SET[(rnd.hash_one((2, b)) % (PASSWORD_SET.len() as u64)) as usize] as char);
     }
-
     res
 }
