@@ -1,4 +1,3 @@
 0001-Don-t-build-httplz.patch
 0002-Add-binary-for-generating-shell-completion-files.patch
-0003-Uncomment-brotli-simd-feature-commented-only-to-appe.patch
 0004-Use-HTTP_GENVER-instead-of-Cargo.toml-version-as-gen.patch
