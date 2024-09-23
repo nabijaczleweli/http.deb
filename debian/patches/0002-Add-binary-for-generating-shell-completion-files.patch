@@ -31,15 +31,36 @@ new file mode 100644
 index 0000000..67cdbb2
 --- /dev/null
 +++ b/src/http-build-completions.rs
-@@ -0,0 +1,21 @@
+@@ -0,0 +1,42 @@
++extern crate hyper_native_tls;
++extern crate percent_encoding;
++extern crate trivial_colours;
++extern crate serde_json;
++extern crate mime_guess;
++extern crate tabwriter;
++extern crate arrayvec;
++extern crate walkdir;
 +extern crate blake3;
++extern crate brotli;
++extern crate flate2;
++extern crate rfsapi;
++#[cfg(target_os = "windows")]
++extern crate winapi;
++extern crate ctrlc;
++extern crate serde;
 +extern crate cidr;
 +#[macro_use]
 +extern crate clap;
 +extern crate iron;
++extern crate libc;
++extern crate time;
++extern crate xml;
 +
++mod ops;
 +mod options;
++pub mod util;
 +
++pub struct Error(pub String);
 +pub use options::{Options, LogLevel};
 +
 +use clap::Shell;
