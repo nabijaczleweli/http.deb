@@ -1,3 +1,11 @@
+http (2.1.0-1) unstable; urgency=medium
+
+  * New upstream version 2.1.0 (+ changelog)
+  * d/p/0003-Uncomment-brotli-simd-feature-commented-only-to-appe.patch: remove, unneeded
+  * d/p/0002-Add-binary-for-generating-shell-completion-files.patch: refresh
+
+ -- наб <nabijaczleweli@nabijaczleweli.xyz>  Mon, 23 Sep 2024 22:43:16 +0200
+
 http (2.0.1-1) unstable; urgency=medium
 
   * New upstream version 2.0.1 (+ upstream changelog)
