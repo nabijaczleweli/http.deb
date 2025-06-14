@@ -10,9 +10,9 @@ Homepage: https://github.com/thecoshman/http
 Build-Depends: debhelper,
                debhelper-compat (= 12),
                bash-completion,
-               ronn (>= 0.9.0),
+               ronn (>= 0.9.0) <!nodoc>,
 #              ^ ronn before that fails with regex+locale related errors
-               locales,
+               locales <!nodoc>,
 #              ^ we need to generate some locales for ronn
                cargo,
                pkg-config,
