@@ -1,3 +1,45 @@
+v2.3.0          Doing so much blow that I can't close my eyelids
+
+    Fixed:
+      * HEAD returning Content-Length: 0 always
+        (https://github.com/thecoshman/http/issues/173)
+
+    New:
+      * --404 FALLBACK-FILE to reply with FALLBACK-FILE as a body for GET 404s
+        (https://github.com/thecoshman/http/issues/159)
+
+v2.2.1          Razor blade to my tongue
+
+    Fixed:
+      * Compilation error on new rustc by updating traitobject in hyper
+        (https://github.com/Sympatron) (https://github.com/thecoshman/http/issues/154) (https://github.com/thecoshman/http/issues/171)
+
+    New:
+      * @Sympatron in authors list
+
+    Internal:
+      * Travis left-overs removed
+        (https://github.com/thecoshman/http/issues/169)
+
+v2.2.0          Starting to remember when my essence wasn't smothered
+
+    Fixed:
+      * 401 Unauthorised responses being truncated
+      * Arch package link in README
+        (https://github.com/bjorn) (https://github.com/thecoshman/http/issues/166)
+      * Innocuous JS error in generated index with -w but not -d
+      * WebDAV PROPFIND filenames not being %-escaped
+
+    New:
+      * Cargo.toml profile.release.lto = true
+        (https://github.com/thecoshman/http/issues/165)
+      * @bjorn & @ideless in authors list
+      * Upload progress for each file in generated indices with -w
+        (https://github.com/ideless) (https://github.com/thecoshman/http/issues/168)
+
+    Internal:
+      * Vendored hyper warnings on new rustc fixed
+
 v2.1.0          Death couldn't stiffen you
 
     Fixed:
