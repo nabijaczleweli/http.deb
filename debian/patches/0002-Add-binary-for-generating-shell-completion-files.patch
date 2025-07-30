@@ -4,16 +4,16 @@ Subject: Add binary for generating shell completion files
 
 ---
  Cargo.toml                    |  6 ++++++
- src/http-build-completions.rs | 21 +++++++++++++++++++++
+ src/http-build-completions.rs | 42 ++++++++++++++++++++++++++++++++++++++++++
  src/options.rs                | 10 +++++++---
- 3 files changed, 34 insertions(+), 3 deletions(-)
+ 3 files changed, 55 insertions(+), 3 deletions(-)
  create mode 100644 src/http-build-completions.rs
 
 diff --git a/Cargo.toml b/Cargo.toml
-index 212aa77..9239cc1 100644
+index 7e48493..fba3d1f 100644
 --- a/Cargo.toml
 +++ b/Cargo.toml
-@@ -82,6 +82,12 @@ path = "src/main.rs"
+@@ -87,6 +87,12 @@ path = "src/main.rs"
  test = false
  doc = false
  
@@ -28,7 +28,7 @@ index 212aa77..9239cc1 100644
  name = "http"
 diff --git a/src/http-build-completions.rs b/src/http-build-completions.rs
 new file mode 100644
-index 0000000..67cdbb2
+index 0000000..a200e60
 --- /dev/null
 +++ b/src/http-build-completions.rs
 @@ -0,0 +1,42 @@
@@ -75,10 +75,10 @@ index 0000000..67cdbb2
 +    }
 +}
 diff --git a/src/options.rs b/src/options.rs
-index 8f5440f..68c9508 100644
+index 05e7e31..bd19d48 100644
 --- a/src/options.rs
 +++ b/src/options.rs
-@@ -120,9 +120,8 @@ pub struct Options {
+@@ -123,9 +123,8 @@ pub struct Options {
  }
  
  impl Options {
@@ -88,9 +88,9 @@ index 8f5440f..68c9508 100644
 +    pub fn app() -> App<'static, 'static> {
 +        App::new("http")
              .version(crate_version!())
-             .author(crate_authors!("\n"))
+             .author(&*env!("CARGO_PKG_AUTHORS").replace(":", "\n"))
              .about(crate_description!())
-@@ -182,6 +181,11 @@ impl Options {
+@@ -187,6 +186,11 @@ impl Options {
                  .number_of_values(1)
                  .use_delimiter(false)
                  .validator(|s| Options::header_parse(&s).map(|_| ())))
