@@ -127,7 +127,7 @@ impl Options {
     pub fn parse() -> Options {
         let matches = App::new("http")
             .version(crate_version!())
-            .author(crate_authors!("\n"))
+            .author(&*env!("CARGO_PKG_AUTHORS").replace(":", "\n"))
             .about(crate_description!())
             .setting(AppSettings::ColoredHelp)
             .arg(Arg::from_usage("[DIR] 'Directory to host. Default: current working directory'")
@@ -256,7 +256,7 @@ impl Options {
             generate_listings: !matches.is_present("no-listings"),
             check_indices: !matches.is_present("no-indices"),
             strip_extensions: matches.is_present("strip-extensions"),
-            try_404: matches.value_of("404").map(|t4| PathBuf::from(t4)),
+            try_404: matches.value_of("404").map(PathBuf::from),
             allow_writes: matches.is_present("allow-write"),
             encode_fs: !matches.is_present("no-encode"),
             encoded_filesystem_limit: matches.value_of("encoded-filesystem").and_then(|s| Options::size_parse(s.into()).ok()),
@@ -363,7 +363,7 @@ impl Options {
 
     fn normalise_path(path: &str) -> String {
         let mut frags = vec![];
-        for fragment in path.split(|c| c == '/' || c == '\\') {
+        for fragment in path.split(['/', '\\']) {
             match fragment {
                 "" | "." => {}
                 ".." => {
@@ -420,14 +420,14 @@ impl Options {
 
     fn age_parse<'s>(s: Cow<'s, str>) -> Result<u64, String> {
         let mut s = &s[..];
-        let mul: u64 = match s.as_bytes().last() {
-            Some(b's') => 1,
-            Some(b'm') => 60,
-            Some(b'h') => 60 * 60,
-            Some(b'd') => 60 * 60 * 24,
-            _ => 1,
+        let (mul, trim) = match s.as_bytes().last() {
+            Some(b's') => (1, true),
+            Some(b'm') => (60, true),
+            Some(b'h') => (60 * 60, true),
+            Some(b'd') => (60 * 60 * 24, true),
+            _ => (1, false),
         };
-        if mul != 1 {
+        if trim {
             s = &s[..s.len() - 1];
         }
         s.parse().map(|age: u64| age * mul).map_err(|e| format!("{} not a valid (optionally-s/m/h/d-suffixed) number: {}", s, e))
