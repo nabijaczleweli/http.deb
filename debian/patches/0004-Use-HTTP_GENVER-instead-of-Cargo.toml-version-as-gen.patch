@@ -1,16 +1,27 @@
 From: =?utf-8?b?0L3QsNCx?= <nabijaczleweli@nabijaczleweli.xyz>
 Date: Sun, 2 Jun 2024 19:25:51 +0200
 Subject: Use $HTTP_GENVER instead of Cargo.toml version as generator branding
+ and http --version output
 
 ---
- build.rs | 4 +---
- 1 file changed, 1 insertion(+), 3 deletions(-)
+ build.rs       | 6 ++----
+ src/options.rs | 2 +-
+ 2 files changed, 3 insertions(+), 5 deletions(-)
 
 diff --git a/build.rs b/build.rs
-index 846cbf9..970823d 100644
+index dbaa21e..f67baa6 100644
 --- a/build.rs
 +++ b/build.rs
-@@ -29,9 +29,7 @@ fn assets() -> Vec<(&'static str, String)> {
+@@ -7,7 +7,7 @@ use std::env;
+ use std::path::Path;
+ use std::fs::{self, File};
+ use base64::display::Base64Display;
+-use std::io::{BufReader, BufRead, Write};
++use std::io::Write;
+ use std::collections::{BTreeMap, BTreeSet};
+ use base64::engine::general_purpose::STANDARD_NO_PAD as BASE64_STANDARD_NO_PAD;
+ 
+@@ -32,9 +32,7 @@ fn assets() -> Vec<(&'static str, String)> {
          println!("cargo:rerun-if-changed=Cargo.toml");
          assets.push(("generator",
                       format!("http {}",
@@ -21,3 +32,16 @@ index 846cbf9..970823d 100644
      }
      for (key, mime, file) in
          [("favicon", "image/png", "assets/favicon.png"),
+diff --git a/src/options.rs b/src/options.rs
+index 23d4e48..87ee0c8 100644
+--- a/src/options.rs
++++ b/src/options.rs
+@@ -125,7 +125,7 @@ pub struct Options {
+ impl Options {
+     pub fn with_app<T>(f: fn(App) -> T) -> T {
+         f(App::new("http")
+-            .version(crate_version!())
++            .version(env!("HTTP_GENVER"))
+             .author(&*env!("CARGO_PKG_AUTHORS").replace(":", "\n"))
+             .about(crate_description!())
+             .setting(AppSettings::ColoredHelp)
