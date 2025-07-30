@@ -9,6 +9,7 @@ use std::fs::{self, File};
 use base64::display::Base64Display;
 use std::io::{BufReader, BufRead, Write};
 use std::collections::{BTreeMap, BTreeSet};
+use base64::engine::general_purpose::STANDARD_NO_PAD as BASE64_STANDARD_NO_PAD;
 
 
 
@@ -20,7 +21,7 @@ fn main() {
 
     embed_resource::compile("http-manifest.rc");
 
-#[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
     cc::Build::new().file("build-ioctl.c").define("_GNU_SOURCE", "1").compile("http-ioctl");
 }
 
@@ -51,7 +52,7 @@ fn assets() -> Vec<(&'static str, String)> {
         assets.push((key,
                      format!("data:{};base64,{}",
                              mime,
-                             Base64Display::with_config(&fs::read(file).unwrap()[..], base64::STANDARD))));
+                             Base64Display::new(&fs::read(file).unwrap()[..], &BASE64_STANDARD_NO_PAD))));
     }
     let outd = env::var("OUT_DIR").unwrap();
     fs::create_dir_all(format!("{}/{}", outd, "assets")).unwrap();
@@ -96,7 +97,7 @@ fn htmls() {
         let mut argsused = BTreeMap::<u32, u8>::new();
         let mut idx = 0;
         for (start, (len, argi)) in arguments {
-            if with_assets[idx..start].len() != 0 {
+            if !with_assets[idx..start].is_empty() {
                 data.push(Ok(&with_assets[idx..start]));
             }
             data.push(Err(argi));

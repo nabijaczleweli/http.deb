@@ -21,6 +21,7 @@ extern crate cidr;
 #[macro_use]
 extern crate clap;
 extern crate iron;
+#[cfg(not(target_os = "windows"))]
 extern crate libc;
 extern crate time;
 extern crate xml;
@@ -34,20 +35,19 @@ pub struct Error(pub String);
 pub use options::{LogLevel, Options};
 
 use std::mem;
-use libc::exit;
 use iron::Iron;
 use std::net::IpAddr;
+use std::process::exit;
 use std::time::Duration;
 use tabwriter::TabWriter;
 use std::io::{Write, stdout};
-use std::collections::BTreeSet;
 use std::sync::{Mutex, Condvar};
 use hyper_native_tls::NativeTlsServer;
 
 
 fn main() {
     let result = actual_main();
-    unsafe { exit(result) }
+    exit(result)
 }
 
 fn actual_main() -> i32 {
@@ -64,7 +64,7 @@ fn result_main() -> Result<(), Error> {
     if opts.generate_tls {
         opts.tls_data = Some(ops::generate_tls_data(&opts.temp_directory)?);
     }
-    for path in mem::replace(&mut opts.generate_path_auth, BTreeSet::new()) {
+    for path in mem::take(&mut opts.generate_path_auth) {
         opts.path_auth_data.insert(path, Some(ops::generate_auth_data()));
     }
 
@@ -93,17 +93,11 @@ fn result_main() -> Result<(), Error> {
             print!(" under address {}", responder.socket.ip());
         }
         print!(" with");
-        if let Some(&((ref id, _), _)) = opts.tls_data.as_ref() {
-            print!(" TLS certificate from \"{}\"", id);
-        } else {
-            print!("out TLS");
+        match opts.tls_data.as_ref() {
+            Some(&((ref id, _), _)) => print!(" TLS certificate from \"{}\"", id),
+            None => print!("out TLS"),
         }
-        if !opts.path_auth_data.is_empty() {
-            print!(" and basic authentication");
-        } else {
-            print!(" and no authentication");
-        }
-        println!("...");
+        println!(" and {} authentication...", ["basic", "no"][opts.path_auth_data.is_empty() as usize]);
 
         if let Some(band) = opts.request_bandwidth {
             println!("Requests limited to {}B/s.", band);
@@ -159,17 +153,28 @@ fn result_main() -> Result<(), Error> {
     let Options { encoded_prune: opts_encoded_prune, temp_directory: opts_temp_directory, generate_tls: opts_generate_tls, .. } = opts;
 
     static END_HANDLER: Condvar = Condvar::new();
-    ctrlc::set_handler(|| END_HANDLER.notify_one()).unwrap();
+    static END_HANDLER_MUTEX: Mutex<bool> = Mutex::new(true);
+    ctrlc::set_handler(|| {
+            let mut mtx = END_HANDLER_MUTEX.lock().unwrap();
+            *mtx = false;
+            END_HANDLER.notify_one();
+        })
+        .unwrap();
     if opts_encoded_prune.is_some() {
         loop {
-            if !END_HANDLER.wait_timeout(Mutex::new(()).lock().unwrap(), Duration::from_secs(handler.handler.prune_interval)).unwrap().1.timed_out() {
+            if !END_HANDLER.wait_timeout_while(END_HANDLER_MUTEX.lock().unwrap(),
+                                    Duration::from_secs(handler.handler.prune_interval),
+                                    |keepgoing| *keepgoing)
+                .unwrap()
+                .1
+                .timed_out() {
                 break;
             }
 
             handler.handler.prune();
         }
     } else {
-        drop(END_HANDLER.wait(Mutex::new(()).lock().unwrap()).unwrap());
+        drop(END_HANDLER.wait_while(END_HANDLER_MUTEX.lock().unwrap(), |keepgoing| *keepgoing).unwrap());
     }
 
     responder.close().unwrap();
