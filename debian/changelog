@@ -1,3 +1,11 @@
+http (2.3.1-1) unstable; urgency=medium
+
+  * New upstream version 2.3.1 (+ changelog)
+  * Rebase patches
+  * Use debian version for http --version output too
+
+ -- наб <nabijaczleweli@nabijaczleweli.xyz>  Wed, 30 Jul 2025 18:50:49 +0200
+
 http (2.3.0-1) unstable; urgency=medium
 
   * New upstream version 2.3.0 (+ changelog)
