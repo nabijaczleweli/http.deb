@@ -9,7 +9,7 @@ Subject: Use $HTTP_GENVER instead of Cargo.toml version as generator branding
  2 files changed, 3 insertions(+), 5 deletions(-)
 
 diff --git a/build.rs b/build.rs
-index dbaa21e..f67baa6 100644
+index 31151a2..5cd733b 100644
 --- a/build.rs
 +++ b/build.rs
 @@ -7,7 +7,7 @@ use std::env;
@@ -30,13 +30,13 @@ index dbaa21e..f67baa6 100644
 -                                 .trim_matches('"'))));
 +                             env!("HTTP_GENVER"))));
      }
-     for (key, mime, file) in
-         [("favicon", "image/png", "assets/favicon.png"),
+     for (key, file) in [("favicon", "assets/favicon.png"),
+                         ("dir_icon", "assets/icons/directory.gif"),
 diff --git a/src/options.rs b/src/options.rs
-index 23d4e48..87ee0c8 100644
+index 706fa13..a316192 100644
 --- a/src/options.rs
 +++ b/src/options.rs
-@@ -125,7 +125,7 @@ pub struct Options {
+@@ -127,7 +127,7 @@ pub struct Options {
  impl Options {
      pub fn with_app<T>(f: fn(App) -> T) -> T {
          f(App::new("http")

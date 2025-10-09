@@ -10,10 +10,10 @@ Subject: Add binary for generating shell completion files
  create mode 100644 src/http-build-completions.rs
 
 diff --git a/Cargo.toml b/Cargo.toml
-index 7e48493..fba3d1f 100644
+index e79f84a..3d8230a 100644
 --- a/Cargo.toml
 +++ b/Cargo.toml
-@@ -87,6 +87,12 @@ path = "src/main.rs"
+@@ -93,6 +93,12 @@ path = "src/main.rs"
  test = false
  doc = false
  
@@ -77,10 +77,10 @@ index 0000000..5450226
 +    );
 +}
 diff --git a/src/options.rs b/src/options.rs
-index 05e7e31..23d4e48 100644
+index 8775fd4..706fa13 100644
 --- a/src/options.rs
 +++ b/src/options.rs
-@@ -123,9 +123,8 @@ pub struct Options {
+@@ -125,9 +125,8 @@ pub struct Options {
  }
  
  impl Options {
@@ -92,7 +92,7 @@ index 05e7e31..23d4e48 100644
              .version(crate_version!())
              .author(&*env!("CARGO_PKG_AUTHORS").replace(":", "\n"))
              .about(crate_description!())
-@@ -187,6 +186,13 @@ impl Options {
+@@ -190,6 +189,13 @@ impl Options {
                  .number_of_values(1)
                  .use_delimiter(false)
                  .validator(|s| Options::header_parse(&s).map(|_| ())))
@@ -106,7 +106,7 @@ index 05e7e31..23d4e48 100644
              .get_matches();
  
          let dir = matches.value_of("DIR").unwrap_or(".");
-@@ -294,6 +300,7 @@ impl Options {
+@@ -298,6 +304,7 @@ impl Options {
                  .map(Result::unwrap)
                  .collect(),
          }
