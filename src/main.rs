@@ -11,6 +11,7 @@ extern crate arrayvec;
 extern crate walkdir;
 extern crate blake3;
 extern crate brotli;
+extern crate chrono;
 extern crate flate2;
 extern crate rfsapi;
 #[cfg(target_os = "windows")]
@@ -23,8 +24,9 @@ extern crate clap;
 extern crate iron;
 #[cfg(not(target_os = "windows"))]
 extern crate libc;
-extern crate time;
+extern crate tar;
 extern crate xml;
+extern crate zip;
 
 mod options;
 

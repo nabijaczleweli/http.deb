@@ -192,13 +192,53 @@ pass parameters like what port to use.
 
     Allow MKCOL (create directory) and MOVE (rename) WebDAV requests.
 
+    These are accessible from the web UI.
+
     These are write requests so this is a no-op unless -w. False by default.
 
   -d --webdav
 
-    Handle WebDAV requests.
+    Handle WebDAV requests:
+      MKCOL     (create directory)
+      MOVE      (rename)
+      PROPFIND  (open in WebDAV client)
+      COPY      (copy files, directories)
+      PROPPATCH (set file properties after PUT-uploading)
+
+    MKCOL and MOVE are accessible from the web UI,
+    the rest enable mounting and file management via a WebDAV client.
 
     False by default. Supersedes -D.
+
+  -A --archives
+
+    Allow requesting tar and ZIP archives with
+      curl -H 'Accept: application/tar' ...
+    and by including a form in the generated indices.
+
+    This defines two APIs:
+    1. GET + Accept: containing any of the following:
+       application/tar application/x-tar            => tar
+       application/zip application/x-zip-compressed => ZIP
+    2. POST + sentinel values embedded into the generated index
+       (POST is otherwise unsupported)
+
+    The results should be logically equivalent to
+    "cd -L"ing to the requested path (subject to -s and -r), then
+    "tar -c * .*" (so symbolic links are never followed, for example).
+
+    If a file or directory fails to open,
+    it is skipped and does not abort archiving.
+
+    Files with st_nlink > 1 are detected and accrued for tar archives.
+
+    ZIPs only include regular files, directories, and symbolic links.
+    Files that would be encoded if requesting them directly will be DEFLATEd
+    (subject to -e).
+
+    If the requested path is a file, then a single-file archive is produced.
+
+    False by default.
 
   -l --no-listings
 
