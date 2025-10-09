@@ -5,9 +5,8 @@ use serde::Serialize;
 use std::sync::RwLock;
 use std::{fmt, str, mem};
 use cidr::{Cidr, IpCidr};
-use time::precise_time_ns;
-use arrayvec::ArrayString;
 use std::fs::{self, File};
+use arrayvec::ArrayString;
 use std::default::Default;
 use iron::modifiers::Header;
 use std::path::{PathBuf, Path};
@@ -26,22 +25,22 @@ use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 use iron::{headers, status, method, IronResult, Listening, Response, Headers, Request, Handler, Iron};
 use std::io::{self, ErrorKind as IoErrorKind, BufReader, SeekFrom, Write, Error as IoError, Read, Seek};
 use iron::mime::{Mime, Attr as MimeAttr, Value as MimeAttrValue, SubLevel as MimeSubLevel, TopLevel as MimeTopLevel};
-use self::super::util::{HumanReadableSize, WwwAuthenticate, NoDoubleQuotes, NoHtmlLiteral, XLastModified, DisplayThree, CommaList, XOcMTime, MsAsS, Maybe, Dav,
-                        url_path, file_etag, file_hash, set_mtime_f, is_symlink, encode_str, error_html, encode_file, file_length, file_binary, client_mobile,
-                        percent_decode, escape_specials, file_icon_suffix, is_actually_file, is_descendant_of, response_encoding, detect_file_as_dir,
-                        encoding_extension, file_time_modified, file_time_modified_p, dav_level_1_methods, get_raw_fs_metadata, encode_tail_if_trimmed,
-                        extension_is_blacklisted, directory_listing_html, directory_listing_mobile_html, is_nonexistent_descendant_of, USER_AGENT, MAX_SYMLINKS,
-                        INDEX_EXTENSIONS, MIN_ENCODING_GAIN, MAX_ENCODING_SIZE, MIN_ENCODING_SIZE};
+use self::super::util::{HumanReadableSize, WwwAuthenticate, NoDoubleQuotes, NoHtmlLiteral, XLastModified, DisplayThree, CommaList,
+                        XOcMTime, MsAsS, Maybe, Dav, url_path, file_etag, file_hash, set_mtime_f, is_symlink, encode_str, error_html, encode_file, file_length,
+                        file_binary, client_mobile, percent_decode, escape_specials, precise_time_ns, file_icon_suffix, is_actually_file, is_descendant_of,
+                        response_encoding, detect_file_as_dir, encoding_extension, file_time_modified, file_time_modified_p, dav_level_1_methods,
+                        get_raw_fs_metadata, encode_tail_if_trimmed, extension_is_blacklisted, directory_listing_html, directory_listing_mobile_html,
+                        is_nonexistent_descendant_of, USER_AGENT, MAX_SYMLINKS, INDEX_EXTENSIONS, MIN_ENCODING_GAIN, MAX_ENCODING_SIZE, MIN_ENCODING_SIZE};
 
 macro_rules! log {
-    ($logcfg:expr, $fmt:expr) => {
-        use time::now;
+    ($logcfg:expr, $fmt:expr) => {{
+        use chrono::Local;
         use trivial_colours::{Reset as CReset, Colour as C};
 
         if $logcfg.0 {
             if $logcfg.2 {
                 if $logcfg.1 {
-                    print!("{}[{}]{} ", C::Cyan, now().strftime("%F %T").unwrap(), CReset);
+                    print!("{}[{}]{} ", C::Cyan, Local::now().format("%F %T"), CReset);
                 }
                 println!(concat!($fmt, "{black:.0}{red:.0}{green:.0}{yellow:.0}{blue:.0}{magenta:.0}{cyan:.0}{white:.0}{reset:.0}"),
                          black = C::Black,
@@ -55,7 +54,7 @@ macro_rules! log {
                          reset = CReset);
             } else {
                 if $logcfg.1 {
-                    print!("[{}] ", now().strftime("%F %T").unwrap());
+                    print!("[{}] ", Local::now().format("%F %T"));
                 }
                 println!(concat!($fmt, "{black:.0}{red:.0}{green:.0}{yellow:.0}{blue:.0}{magenta:.0}{cyan:.0}{white:.0}{reset:.0}"),
                          black = "",
@@ -69,15 +68,15 @@ macro_rules! log {
                          reset = "");
             }
         }
-    };
-    ($logcfg:expr, $fmt:expr, $($arg:tt)*) => {
-        use time::now;
+    }};
+    ($logcfg:expr, $fmt:expr, $($arg:tt)*) => {{
+        use chrono::Local;
         use trivial_colours::{Reset as CReset, Colour as C};
 
         if $logcfg.0 {
             if $logcfg.2 {
                 if $logcfg.1 {
-                    print!("{}[{}]{} ", C::Cyan, now().strftime("%F %T").unwrap(), CReset);
+                    print!("{}[{}]{} ", C::Cyan, Local::now().format("%F %T"), CReset);
                 }
                 println!(concat!($fmt, "{black:.0}{red:.0}{green:.0}{yellow:.0}{blue:.0}{magenta:.0}{cyan:.0}{white:.0}{reset:.0}"),
                          $($arg)*,
@@ -92,7 +91,7 @@ macro_rules! log {
                          reset = CReset);
             } else {
                 if $logcfg.1 {
-                    print!("[{}] ", now().strftime("%F %T").unwrap());
+                    print!("[{}] ", Local::now().format("%F %T"));
                 }
                 println!(concat!($fmt, "{black:.0}{red:.0}{green:.0}{yellow:.0}{blue:.0}{magenta:.0}{cyan:.0}{white:.0}{reset:.0}"),
                          $($arg)*,
@@ -107,14 +106,16 @@ macro_rules! log {
                          reset = "");
             }
         }
-    };
+    }};
 }
 
 mod prune;
 mod webdav;
+mod archive;
 mod bandwidth;
 
 pub use self::prune::PruneChain;
+pub use self::archive::ArchiveType;
 pub use self::bandwidth::{LimitBandwidthMiddleware, SimpleChain};
 
 
@@ -138,6 +139,7 @@ pub struct HttpHandler {
     /// (at all, log_time, log_colour)
     pub log: (bool, bool, bool),
     pub webdav: WebDavLevel,
+    pub archives: bool,
     pub global_auth_data: Option<(String, Option<String>)>,
     pub path_auth_data: BTreeMap<String, Option<(String, Option<String>)>>,
     pub writes_temp_dir: Option<(String, PathBuf)>,
@@ -199,6 +201,7 @@ impl HttpHandler {
             try_404: opts.try_404.clone(),
             log: (opts.loglevel < LogLevel::NoServeStatus, opts.log_time, opts.log_colour),
             webdav: opts.webdav,
+            archives: opts.archives,
             global_auth_data: global_auth_data,
             path_auth_data: path_auth_data,
             writes_temp_dir: HttpHandler::temp_subdir(&opts.temp_directory, opts.allow_writes, "writes"),
@@ -276,6 +279,14 @@ impl Handler for &'static HttpHandler {
             method::DavMove if self.webdav >= WebDavLevel::MkColMoveOnly => self.handle_webdav_move(req),
             method::DavPropfind if self.webdav >= WebDavLevel::All => self.handle_webdav_propfind(req),
             method::DavProppatch if self.webdav >= WebDavLevel::All => self.handle_webdav_proppatch(req),
+
+            method::Post if self.archives => {
+                if let Some(archive_type) = self.parse_post_archive(req) {
+                    self.handle_get_archive(req, archive_type)
+                } else {
+                    self.handle_bad_method(req)
+                }
+            }
 
             _ => self.handle_bad_method(req),
         }?;
@@ -365,6 +376,12 @@ impl HttpHandler {
     }
 
     fn handle_get(&self, req: &mut Request) -> IronResult<Response> {
+        if self.archives{
+            if let Some(archive_type) = self.parse_get_accept_archive(req) {
+                return self.handle_get_archive(req, archive_type);
+            }
+        }
+
         let (mut req_p, symlink, url_err) = self.parse_requested_path(req);
 
         if url_err {
@@ -435,7 +452,7 @@ impl HttpHandler {
 
         if let Some(try_404) = try_404.as_ref() {
             if try_404.metadata().map(|m| !m.is_dir()).unwrap_or(false) {
-                return self.handle_get_file(req, try_404, true)
+                return self.handle_get_file(req, try_404, true);
             }
         }
 
@@ -471,8 +488,7 @@ impl HttpHandler {
                 return true;
             }
         } else if let Some(headers::IfModifiedSince(since)) = req.headers.get::<headers::IfModifiedSince>() {
-            // unavoidable truncation, the timestamp format is second-resolution; to_timespec() is what <Tm as Ord> does
-            if file_time_modified_p(req_p).to_timespec().sec <= since.0.to_timespec().sec {
+            if file_time_modified_p(req_p) <= since.0 {
                 return true;
             }
         }
@@ -494,7 +510,7 @@ impl HttpHandler {
                         log!(self.log, "{} Not Modified", self.remote_addresses(req));
                         return Ok(Response::with((status::NotModified,
                                                   (Header(headers::Server(USER_AGENT.into())),
-                                                   Header(headers::LastModified(headers::HttpDate(file_time_modified_p(&req_p)))),
+                                                   Header(headers::LastModified(headers::HttpDate(file_time_modified_p(&req_p).into()))),
                                                    Header(headers::AcceptRanges(headers::RangeUnit::Bytes))),
                                                   Header(headers::ETag(headers::EntityTag::strong(etag))))));
                     }
@@ -540,7 +556,7 @@ impl HttpHandler {
 
         Ok(Response::with((status::PartialContent,
                            (Header(headers::Server(USER_AGENT.into())),
-                            Header(headers::LastModified(headers::HttpDate(file_time_modified_p(&req_p)))),
+                            Header(headers::LastModified(headers::HttpDate(file_time_modified_p(&req_p).into()))),
                             Header(headers::ContentRange(headers::ContentRangeSpec::Bytes {
                                 range: Some((from, to)),
                                 instance_length: Some(file_length(&f.metadata().expect("Failed to get requested file metadata"), &req_p)),
@@ -586,7 +602,7 @@ impl HttpHandler {
         Ok(Response::with((status::PartialContent,
                            f,
                            (Header(headers::Server(USER_AGENT.into())),
-                            Header(headers::LastModified(headers::HttpDate(file_time_modified(&fmeta)))),
+                            Header(headers::LastModified(headers::HttpDate(file_time_modified(&fmeta).into()))),
                             Header(headers::ContentRange(headers::ContentRangeSpec::Bytes {
                                 range: Some((b_from, flen - 1)),
                                 instance_length: Some(flen),
@@ -617,7 +633,7 @@ impl HttpHandler {
 
         Ok(Response::with((status::NoContent,
                            (Header(headers::Server(USER_AGENT.into())),
-                            Header(headers::LastModified(headers::HttpDate(file_time_modified_p(&req_p)))),
+                            Header(headers::LastModified(headers::HttpDate(file_time_modified_p(&req_p).into()))),
                             Header(headers::ContentRange(headers::ContentRangeSpec::Bytes {
                                 range: Some((from, to)),
                                 instance_length: Some(file_length(&req_p.metadata().expect("Failed to get requested file metadata"), &req_p)),
@@ -638,7 +654,7 @@ impl HttpHandler {
         let metadata = &req_p.metadata().expect("Failed to get requested file metadata");
         let etag = file_etag(&metadata);
         let headers = (Header(headers::Server(USER_AGENT.into())),
-                       Header(headers::LastModified(headers::HttpDate(file_time_modified(&metadata)))),
+                       Header(headers::LastModified(headers::HttpDate(file_time_modified(&metadata).into()))),
                        Header(headers::AcceptRanges(headers::RangeUnit::Bytes)));
         if HttpHandler::should_304_path(req, &req_p, &etag) {
             log!(self.log, "{} Not Modified", self.remote_addresses(req).as_spaces());
@@ -816,7 +832,7 @@ impl HttpHandler {
                         RawFileData {
                             mime_type: Mime(MimeTopLevel::Text, MimeSubLevel::Ext("directory".to_string()), Default::default()), // text/directory
                             name: f.file_name().into_string().expect("Failed to get file name"),
-                            last_modified: file_time_modified_p(&f.path()),
+                            last_modified: file_time_modified_p(&f.path()).into(),
                             size: 0,
                             is_file: false,
                         }
@@ -922,12 +938,10 @@ impl HttpHandler {
                 parentpath = &parentpath[0..parentpath.len() - 1];
             }
             let modified = file_time_modified_p(req_p.parent().unwrap_or(&req_p));
-            let modified_ts = modified.to_timespec();
             let _ = write!(out,
-                       r#"<a href="{up_path}" id=".."><div><span class="back_arrow_icon">Parent directory</span></div><div><time ms={}{:03}>{} UTC</time></div></a>"#,
-                       modified_ts.sec,
-                       modified_ts.nsec / 1000_000,
-                       modified.strftime("%F %T").unwrap(),
+                       r#"<a href="{up_path}" id=".."><div><span class="back_arrow_icon">Parent directory</span></div><div><time ms={}>{} UTC</time></div></a>"#,
+                       modified.timestamp_millis(),
+                       modified.format("%F %T"),
                        up_path = unsafe { str::from_utf8_unchecked(parentpath) });
         };
         let list_f = |out: &mut Vec<u8>| {
@@ -956,11 +970,10 @@ impl HttpHandler {
                 let fname = f.file_name().into_string().expect("Failed to get file name");
                 let path = f.path();
                 let modified = file_time_modified(&fmeta);
-                let modified_ts = modified.to_timespec();
 
                 let _ = writeln!(out,
                                  concat!(r#"<a href="{path}{fname}" id="{}"><div><span class="{}{}_icon">{}{}</span>{}</div>"#,
-                                         r#"<div><time ms={}{:03}>{} UTC</time>{}</div></a>"#),
+                                         r#"<div><time ms={}>{} UTC</time>{}</div></a>"#),
                                  NoDoubleQuotes(&fname),
                                  if is_file { "file" } else { "dir" },
                                  file_icon_suffix(&path, is_file),
@@ -977,9 +990,8 @@ impl HttpHandler {
                                  } else {
                                      DisplayThree("", "", "")
                                  },
-                                 modified_ts.sec,
-                                 modified_ts.nsec / 1000_000,
-                                 modified.strftime("%F %T").unwrap(),
+                                 modified.timestamp_millis(),
+                                 modified.format("%F %T"),
                                  if is_file {
                                      DisplayThree("<span class=\"size\">", Maybe(Some(HumanReadableSize(file_length(&fmeta, &path)))), "</span>")
                                  } else {
@@ -1021,6 +1033,15 @@ impl HttpHandler {
                                                                                   r#"<a id='new"directory' href><span class="new_dir_icon">Create directory</span></a>"#
                                                                               } else {
                                                                                   ""
+                                                                              },
+                                                                              if self.archives{
+                                                                                  concat!(r#"<form method=post enctype=text/plain class="heading">"#,
+                                                                                          "Download as archive: ",
+                                                                                          include_str!(concat!(env!("OUT_DIR"),
+                                                                                                       "/assets/directory_listing_achive_inputs.html")),
+                                                                                          "</form>")
+                                                                              } else {
+                                                                                  ""
                                                                               }))
     }
 
@@ -1046,14 +1067,12 @@ impl HttpHandler {
                 parentpath = &parentpath[0..parentpath.len() - 1];
             }
             let modified = file_time_modified_p(req_p.parent().unwrap_or(&req_p));
-            let modified_ts = modified.to_timespec();
             let _ = write!(out,
                            "<tr id=\"..\"><td><a href=\"{up_path}\" tabindex=\"-1\" class=\"back_arrow_icon\"></a></td> <td><a \
-                            href=\"{up_path}\">Parent directory</a></td> <td><a href=\"{up_path}\" tabindex=\"-1\"><time ms={}{:03}>{}</time></a></td> \
+                            href=\"{up_path}\">Parent directory</a></td> <td><a href=\"{up_path}\" tabindex=\"-1\"><time ms={}>{}</time></a></td> \
                             <td><a href=\"{up_path}\" tabindex=\"-1\">&nbsp;</a></td> <td><a href=\"{up_path}\" tabindex=\"-1\">&nbsp;</a></td></tr>",
-                           modified_ts.sec,
-                           modified_ts.nsec / 1000_000,
-                           modified.strftime("%F %T").unwrap(),
+                           modified.timestamp_millis(),
+                           modified.format("%F %T"),
                            up_path = unsafe { str::from_utf8_unchecked(parentpath) });
         };
 
@@ -1086,7 +1105,6 @@ impl HttpHandler {
                 let fname = f.file_name().into_string().expect("Failed to get file name");
                 let len = file_length(&fmeta, &path);
                 let modified = file_time_modified(&fmeta);
-                let modified_ts = modified.to_timespec();
                 struct FileSizeDisplay(bool, u64);
                 impl fmt::Display for FileSizeDisplay {
                     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
@@ -1100,16 +1118,15 @@ impl HttpHandler {
 
                 let _ = write!(out,
                                "<tr id=\"{}\"><td><a href=\"{path}{fname}\" tabindex=\"-1\" class=\"{}{}_icon\"></a></td> <td><a \
-                                href=\"{path}{fname}\">{}{}</a></td> <td><a href=\"{path}{fname}\" tabindex=\"-1\"><time ms={}{:03}>{}</time></a></td> \
+                                href=\"{path}{fname}\">{}{}</a></td> <td><a href=\"{path}{fname}\" tabindex=\"-1\"><time ms={}>{}</time></a></td> \
                                 <td><a href=\"{path}{fname}\" tabindex=\"-1\">{}{}{}</a></td> {}</tr>\n",
                                NoDoubleQuotes(&fname),
                                if is_file { "file" } else { "dir" },
                                file_icon_suffix(&path, is_file),
                                NoHtmlLiteral(&fname),
                                if is_file { "" } else { "/" },
-                               modified_ts.sec,
-                               modified_ts.nsec / 1000_000,
-                               modified.strftime("%F %T").unwrap(),
+                               modified.timestamp_millis(),
+                               modified.format("%F %T"),
                                FileSizeDisplay(is_file, len),
                                if is_file {
                                    Maybe(Some(HumanReadableSize(len)))
@@ -1172,6 +1189,16 @@ impl HttpHandler {
                                                                            "<tr id=\'new\"directory\'><td><a tabindex=\"-1\" href \
                                                                             class=\"new_dir_icon\"></a></td><td colspan=3><a href>Create \
                                                                             directory</a></td><td><a tabindex=\"-1\" href>&nbsp;</a></td></tr>"
+                                                                       } else {
+                                                                           ""
+                                                                       },
+                                                                       if self.archives{
+                                                                           concat!("<hr />\
+                                                                            <form method=post enctype=text/plain>\
+                                                                            <p>Archive as ",
+                                                                            include_str!(concat!(env!("OUT_DIR"),
+                                                                            "/assets/directory_listing_achive_inputs.html")),
+                                                                            ".</p></form>")
                                                                        } else {
                                                                            ""
                                                                        }))
